@@ -1,0 +1,378 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Catch-all block default-deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Global validation helpers (Phase 3)
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Since our app operates in a single company workplace, standard authenticated staff can edit documents.
+    // However, to enforce zero-trust security and prevent resource poisoning:
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+
+    // 3. Entity-specific schemas
+    function isValidEmployee(data) {
+      return data.keys().hasAll(['id', 'name', 'job', 'dept', 'salary', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.job is string && data.job.size() <= 200
+        && data.dept is string && data.dept.size() <= 200
+        && data.salary is number
+        && data.status in ['نشط', 'إجازة', 'موقوف'];
+    }
+
+    function isValidLeave(data) {
+      return data.keys().hasAll(['id', 'empId', 'type', 'from', 'to', 'days', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.empId is string && data.empId.size() <= 128
+        && data.type in ['سنوية', 'مرضية', 'اضطرارية', 'بدون راتب']
+        && data.from is string && data.from.size() <= 50
+        && data.to is string && data.to.size() <= 50
+        && data.days is number
+        && data.status in ['بانتظار الموافقة', 'موافق عليها', 'مرفوضة'];
+    }
+
+    function isValidAttendance(data) {
+      return data.keys().hasAll(['id', 'empId', 'date', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.empId is string && data.empId.size() <= 128
+        && data.date is string && data.date.size() <= 50
+        && data.status in ['حاضر', 'متأخر', 'إجازة', 'غائب'];
+    }
+
+    function isValidJob(data) {
+      return data.keys().hasAll(['id', 'title', 'dept', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.title is string && data.title.size() <= 200
+        && data.dept is string && data.dept.size() <= 120
+        && data.status in ['مفتوحة', 'مغلقة'];
+    }
+
+    function isValidCandidate(data) {
+      return data.keys().hasAll(['id', 'name', 'jobId', 'stage', 'rating'])
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.jobId is string && data.jobId.size() <= 128
+        && data.stage is string && data.stage.size() <= 200
+        && data.rating is number;
+    }
+
+    function isValidReview(data) {
+      return data.keys().hasAll(['id', 'empId', 'period', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.empId is string && data.empId.size() <= 128
+        && data.period is string && data.period.size() <= 200
+        && data.status in ['مكتمل', 'قيد التقييم'];
+    }
+
+    function isValidTrainingCard(data) {
+      return data.keys().hasAll(['id', 'title', 'date', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.title is string && data.title.size() <= 200
+        && data.date is string && data.date.size() <= 100
+        && data.status in ['قادمة', 'مكتملة'];
+    }
+
+    function isValidExpense(data) {
+      return data.keys().hasAll(['id', 'empId', 'item', 'amount', 'date', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.empId is string && data.empId.size() <= 128
+        && data.item is string && data.item.size() <= 400
+        && data.amount is number
+        && data.date is string && data.date.size() <= 50
+        && data.status in ['بانتظار الموافقة', 'موافق عليها', 'مرفوضة'];
+    }
+
+    function isValidTrip(data) {
+      return data.keys().hasAll(['id', 'empId', 'dest', 'cost', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.empId is string && data.empId.size() <= 128
+        && data.dest is string && data.dest.size() <= 200
+        && data.cost is number
+        && data.status in ['بانتظار الموافقة', 'موافق عليها', 'مرفوضة'];
+    }
+
+    function isValidHealth(data) {
+      return data.keys().hasAll(['id', 'empId', 'provider', 'class', 'cardNo', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.empId is string && data.empId.size() <= 128
+        && data.provider is string && data.provider.size() <= 200
+        && data.class in ['VIP', 'A', 'B', 'C']
+        && data.cardNo is string && data.cardNo.size() <= 100
+        && data.status in ['نشط', 'موقوف'];
+    }
+
+    function isValidContract(data) {
+      return data.keys().hasAll(['id', 'empId', 'type', 'start', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.empId is string && data.empId.size() <= 128
+        && data.type is string && data.type.size() <= 200
+        && data.start is string && data.start.size() <= 100
+        && data.status is string;
+    }
+
+    function isValidProfession(data) {
+      return data.keys().hasAll(['id', 'empId', 'specialty'])
+        && data.id is string && data.id.size() <= 128
+        && data.empId is string && data.empId.size() <= 128
+        && data.specialty is string && data.specialty.size() <= 200;
+    }
+
+    function isValidDeduction(data) {
+      return data.keys().hasAll(['id', 'empId', 'gosiPct', 'medPct'])
+        && data.id is string && data.id.size() <= 128
+        && data.empId is string && data.empId.size() <= 128
+        && data.gosiPct is number
+        && data.medPct is number;
+    }
+
+    function isValidTask(data) {
+      return data.keys().hasAll(['id', 'title', 'assignee', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.title is string && data.title.size() <= 300
+        && data.assignee is string && data.assignee.size() <= 128
+        && data.status in ['todo', 'inprogress', 'review', 'done'];
+    }
+
+    function isValidDeductionType(data) {
+      return data.keys().hasAll(['id', 'label', 'icon', 'empPct', 'compPct'])
+        && data.id is string && data.id.size() <= 128
+        && data.label is string && data.label.size() <= 300
+        && data.icon is string && data.icon.size() <= 20
+        && data.empPct is number
+        && data.compPct is number;
+    }
+
+    function isValidRBACUser(data) {
+      return data.keys().hasAll(['id', 'fullName', 'username', 'empCode', 'roleId', 'status'])
+        && data.id is string
+        && data.fullName is string
+        && data.username is string
+        && data.empCode is string
+        && data.roleId is string
+        && data.status is string;
+    }
+
+    function isValidRBACRole(data) {
+      return data.keys().hasAll(['id', 'name', 'permissionIds'])
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.permissionIds is list;
+    }
+
+    function isValidRBACPermission(data) {
+      return data.keys().hasAll(['id', 'name', 'category'])
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.category is string && data.category.size() <= 200;
+    }
+
+    function isValidEmployeeAsset(data) {
+      return data.keys().hasAll(['id', 'empId', 'name', 'category', 'status', 'assignDate', 'assignedBy'])
+        && data.id is string && data.id.size() <= 128
+        && data.empId is string && data.empId.size() <= 128
+        && data.name is string && data.name.size() <= 300
+        && data.category is string && data.category.size() <= 200
+        && data.status in ['Assigned', 'Returned', 'Lost', 'Damaged', 'Under Maintenance']
+        && data.assignDate is string && data.assignDate.size() <= 50
+        && (!('returnDate' in data) || (data.returnDate is string && data.returnDate.size() <= 50))
+        && (!('agreementName' in data) || (data.agreementName is string && data.agreementName.size() <= 300))
+        && (!('agreementData' in data) || data.agreementData is string)
+        && (!('imageName' in data) || (data.imageName is string && data.imageName.size() <= 300))
+        && (!('imageData' in data) || data.imageData is string)
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000))
+        && data.assignedBy is string && data.assignedBy.size() <= 200
+        && (!('returnedTo' in data) || (data.returnedTo is string && data.returnedTo.size() <= 200));
+    }
+
+    function isValidAssetHistory(data) {
+      return data.keys().hasAll(['id', 'assetId', 'empId', 'action', 'newStatus', 'changedBy', 'timestamp'])
+        && data.id is string && data.id.size() <= 128
+        && data.assetId is string && data.assetId.size() <= 128
+        && data.empId is string && data.empId.size() <= 128
+        && (!('empName' in data) || (data.empName is string && data.empName.size() <= 200))
+        && data.action in ['assign', 'return', 'status_change']
+        && (!('oldStatus' in data) || (data.oldStatus in ['Assigned', 'Returned', 'Lost', 'Damaged', 'Under Maintenance']))
+        && data.newStatus in ['Assigned', 'Returned', 'Lost', 'Damaged', 'Under Maintenance']
+        && data.changedBy is string && data.changedBy.size() <= 200
+        && data.timestamp is string && data.timestamp.size() <= 100
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000));
+    }
+
+    function isDocEditor() {
+      return isSignedIn() && (
+        request.auth.token.email == "mahmoudfahmyaly695@gmail.com" ||
+        !exists(/databases/$(database)/documents/rbacUsers/$(request.auth.uid)) ||
+        get(/databases/$(database)/documents/rbacUsers/$(request.auth.uid)).data.roleId == 'role_admin' ||
+        get(/databases/$(database)/documents/rbacUsers/$(request.auth.uid)).data.roleId == 'role_hr'
+      );
+    }
+
+    function isValidDoc(data) {
+      return data.keys().hasAll(['id', 'name', 'cat', 'date', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 400
+        && data.cat in ['policy', 'contract', 'hr', 'financial', 'legal', 'training']
+        && data.date is string && data.date.size() <= 100
+        && (!('size' in data) || (data.size is string && data.size.size() <= 100))
+        && (!('type' in data) || (data.type in ['PDF', 'DOCX', 'XLSX', 'ZIP']))
+        && (!('version' in data) || (data.version is string && data.version.size() <= 100))
+        && (!('fileData' in data) || data.fileData is string)
+        && data.status is string;
+    }
+
+    /**
+     * Match Blocks with Schema Checks
+     */
+    match /employees/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidEmployee(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /leaves/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidLeave(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /attendance/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidAttendance(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /jobs/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidJob(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /candidates/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidCandidate(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /reviews/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidReview(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /trainings/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidTrainingCard(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /expenses/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidExpense(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /trips/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidTrip(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /health/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidHealth(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /contracts/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidContract(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /professions/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidProfession(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /deductions/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidDeduction(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /docs/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isDocEditor() && isValidDoc(incoming());
+      allow delete: if isDocEditor();
+    }
+
+    match /tasks/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidTask(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /deductionTypes/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidDeductionType(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /rbacUsers/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidRBACUser(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /rbacRoles/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidRBACRole(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /rbacPermissions/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidRBACPermission(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /assets/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidEmployeeAsset(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /assetHistory/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidAssetHistory(incoming());
+      allow delete: if isSignedIn();
+    }
+
+    match /system_meta/{id} {
+      allow read, write: if isSignedIn();
+    }
+
+  }
+}

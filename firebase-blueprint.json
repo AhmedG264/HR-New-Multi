@@ -1,0 +1,423 @@
+{
+  "entities": {
+    "Employee": {
+      "title": "Employee",
+      "description": "Represents an employee profile in the company",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "job": { "type": "string" },
+        "dept": { "type": "string" },
+        "salary": { "type": "number" },
+        "allow": { "type": "number" },
+        "deduct": { "type": "number" },
+        "status": { "type": "string", "enum": ["نشط", "إجازة", "موقوف"] },
+        "hire": { "type": "string" },
+        "leaveBalance": { "type": "number" },
+        "perf": { "type": "number" }
+      },
+      "required": ["id", "name", "job", "dept", "salary", "status"]
+    },
+    "Leave": {
+      "title": "Leave",
+      "description": "Represents a leaf or vacation request from an employee",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "empId": { "type": "string" },
+        "type": { "type": "string", "enum": ["سنوية", "مرضية", "اضطرارية", "بدون راتب"] },
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "days": { "type": "number" },
+        "status": { "type": "string", "enum": ["بانتظار الموافقة", "موافق عليها", "مرفوضة"] }
+      },
+      "required": ["id", "empId", "type", "from", "to", "days", "status"]
+    },
+    "Attendance": {
+      "title": "Attendance",
+      "description": "Daily attendance record for an employee",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "empId": { "type": "string" },
+        "date": { "type": "string" },
+        "in": { "type": "string" },
+        "out": { "type": "string" },
+        "status": { "type": "string", "enum": ["حاضر", "متأخر", "إجازة", "غائب"] }
+      },
+      "required": ["id", "empId", "date", "status"]
+    },
+    "RecruitmentJob": {
+      "title": "RecruitmentJob",
+      "description": "A job opening created by HR department",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "dept": { "type": "string" },
+        "applicants": { "type": "number" },
+        "stage": { "type": "string" },
+        "status": { "type": "string", "enum": ["مفتوحة", "مغلقة"] }
+      },
+      "required": ["id", "title", "dept", "status"]
+    },
+    "Candidate": {
+      "title": "Candidate",
+      "description": "A candidate applying for a job opening",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "jobId": { "type": "string" },
+        "stage": { "type": "string" },
+        "rating": { "type": "number" }
+      },
+      "required": ["id", "name", "jobId", "stage", "rating"]
+    },
+    "PerformanceReview": {
+      "title": "PerformanceReview",
+      "description": "Employee performance review for a given quarter/period",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "empId": { "type": "string" },
+        "period": { "type": "string" },
+        "score": { "type": "number" },
+        "goal": { "type": "string" },
+        "status": { "type": "string", "enum": ["مكتمل", "قيد التقييم"] }
+      },
+      "required": ["id", "empId", "period", "status"]
+    },
+    "TrainingCourse": {
+      "title": "TrainingCourse",
+      "description": "A corporate training course available for employees",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "date": { "type": "string" },
+        "dur": { "type": "string" },
+        "enrolled": { "type": "number" },
+        "status": { "type": "string", "enum": ["قادمة", "مكتملة"] }
+      },
+      "required": ["id", "title", "date", "status"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "An expense reimbursement request submitted by an employee",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "empId": { "type": "string" },
+        "item": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["بانتظار الموافقة", "موافق عليها", "مرفوضة"] }
+      },
+      "required": ["id", "empId", "item", "amount", "date", "status"]
+    },
+    "Trip": {
+      "title": "Trip",
+      "description": "A business trip request or log from an employee",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "empId": { "type": "string" },
+        "dest": { "type": "string" },
+        "purpose": { "type": "string" },
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "cost": { "type": "number" },
+        "status": { "type": "string", "enum": ["بانتظار الموافقة", "موافق عليها", "مرفوضة"] }
+      },
+      "required": ["id", "empId", "dest", "cost", "status"]
+    },
+    "HealthInsurance": {
+      "title": "HealthInsurance",
+      "description": "Health insurance policy details for employees and their dependents",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "empId": { "type": "string" },
+        "provider": { "type": "string" },
+        "class": { "type": "string", "enum": ["VIP", "A", "B", "C"] },
+        "cardNo": { "type": "string" },
+        "start": { "type": "string" },
+        "end": { "type": "string" },
+        "premium": { "type": "number" },
+        "dependents": { "type": "number" },
+        "status": { "type": "string", "enum": ["نشط", "موقوف"] }
+      },
+      "required": ["id", "empId", "provider", "class", "cardNo", "status"]
+    },
+    "EmployeeContract": {
+      "title": "EmployeeContract",
+      "description": "Saudi GOSI or Qiwa labor contract for employees",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "empId": { "type": "string" },
+        "type": { "type": "string" },
+        "start": { "type": "string" },
+        "end": { "type": "string" },
+        "renewed": { "type": "string" },
+        "nextRenew": { "type": "string" },
+        "iqamaExp": { "type": "string" },
+        "workPermitExp": { "type": "string" },
+        "status": { "type": "string" },
+        "file": { "type": "string" }
+      },
+      "required": ["id", "empId", "type", "start", "status"]
+    },
+    "EmployeeProfession": {
+      "title": "EmployeeProfession",
+      "description": "Educational specialty and technical credentials of an employee",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "empId": { "type": "string" },
+        "specialty": { "type": "string" },
+        "cert": { "type": "string" },
+        "uni": { "type": "string" },
+        "grad": { "type": "string" },
+        "licenseNo": { "type": "string" },
+        "skills": { "type": "string" }
+      },
+      "required": ["id", "empId", "specialty"]
+    },
+    "EmployeeDeduction": {
+      "title": "EmployeeDeduction",
+      "description": "Deduction configuration mapping GOSI, Medical, Taxes, etc.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "empId": { "type": "string" },
+        "gosiPct": { "type": "number" },
+        "medPct": { "type": "number" },
+        "taxPct": { "type": "number" },
+        "otherPct": { "type": "number" },
+        "otherNote": { "type": "string" }
+      },
+      "required": ["id", "empId", "gosiPct", "medPct"]
+    },
+    "CompanyDoc": {
+      "title": "CompanyDoc",
+      "description": "A workspace document readable at various organizational levels",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "cat": { "type": "string", "enum": ["policy", "contract", "hr", "financial", "legal", "training"] },
+        "date": { "type": "string" },
+        "size": { "type": "string" },
+        "type": { "type": "string", "enum": ["PDF", "DOCX", "XLSX", "ZIP"] },
+        "version": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "name", "cat", "type"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "A collaborative task tracked on the Kanban board",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "dept": { "type": "string" },
+        "assignee": { "type": "string" },
+        "priority": { "type": "string", "enum": ["high", "med", "low"] },
+        "status": { "type": "string", "enum": ["todo", "inprogress", "review", "done"] },
+        "due": { "type": "string" },
+        "progress": { "type": "number" },
+        "tags": { "type": "array" },
+        "desc": { "type": "string" },
+        "serviceType": { "type": "string", "enum": ["internal", "external"] },
+        "serviceName": { "type": "string" }
+      },
+      "required": ["id", "title", "assignee", "status"]
+    },
+    "DeductionType": {
+      "title": "DeductionType",
+      "description": "Deduction categories and rates configured globally",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "icon": { "type": "string" },
+        "color": { "type": "string" },
+        "empPct": { "type": "number" },
+        "compPct": { "type": "number" },
+        "canEdit": { "type": "boolean" },
+        "required": { "type": "boolean" },
+        "note": { "type": "string" }
+      },
+      "required": ["id", "label", "icon", "empPct", "compPct"]
+    },
+    "RBACUser": {
+      "title": "RBACUser",
+      "description": "A system user with designated permissions for security simulation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "fullName": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "empCode": { "type": "string" },
+        "roleId": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive"] }
+      },
+      "required": ["id", "fullName", "username", "empCode", "roleId", "status"]
+    },
+    "RBACRole": {
+      "title": "RBACRole",
+      "description": "Represents an organizational role mapping to a set of permissions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "permissionIds": { "type": "array" }
+      },
+      "required": ["id", "name", "permissionIds"]
+    },
+    "RBACPermission": {
+      "title": "RBACPermission",
+      "description": "A granular permission key regulating frontend screens and backend security operations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" }
+      },
+      "required": ["id", "name", "category"]
+    },
+    "EmployeeAsset": {
+      "title": "EmployeeAsset",
+      "description": "An asset or company property assigned to an employee under custody",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "empId": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["Assigned", "Returned", "Lost", "Damaged", "Under Maintenance"] },
+        "assignDate": { "type": "string" },
+        "returnDate": { "type": "string" },
+        "agreementName": { "type": "string" },
+        "agreementData": { "type": "string" },
+        "imageName": { "type": "string" },
+        "imageData": { "type": "string" },
+        "notes": { "type": "string" },
+        "assignedBy": { "type": "string" },
+        "returnedTo": { "type": "string" }
+      },
+      "required": ["id", "empId", "name", "category", "status", "assignDate", "assignedBy"]
+    },
+    "AssetHistory": {
+      "title": "AssetHistory",
+      "description": "An audit log record for custody asset assignments, returns, or state updates",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "assetId": { "type": "string" },
+        "empId": { "type": "string" },
+        "empName": { "type": "string" },
+        "action": { "type": "string", "enum": ["assign", "return", "status_change"] },
+        "oldStatus": { "type": "string" },
+        "newStatus": { "type": "string" },
+        "changedBy": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "assetId", "empId", "action", "newStatus", "changedBy", "timestamp"]
+    }
+  },
+  "firestore": {
+    "employees": {
+      "schema": "Employee",
+      "description": "Collection of employee documents"
+    },
+    "leaves": {
+      "schema": "Leave",
+      "description": "Collection of vacation and leave applications"
+    },
+    "attendance": {
+      "schema": "Attendance",
+      "description": "Collection of daily attendance check logs"
+    },
+    "jobs": {
+      "schema": "RecruitmentJob",
+      "description": "Collection of corporate job openings"
+    },
+    "candidates": {
+      "schema": "Candidate",
+      "description": "Collection of candidate job applications"
+    },
+    "reviews": {
+      "schema": "PerformanceReview",
+      "description": "Collection of employee quarterly evaluation ratings"
+    },
+    "trainings": {
+      "schema": "TrainingCourse",
+      "description": "Collection of training programs to develop technical capabilities"
+    },
+    "expenses": {
+      "schema": "Expense",
+      "description": "Collection of business expense forms needing approval"
+    },
+    "trips": {
+      "schema": "Trip",
+      "description": "Collection of business trip and travel logs"
+    },
+    "health": {
+      "schema": "HealthInsurance",
+      "description": "Collection of employee medical insurance cards"
+    },
+    "contracts": {
+      "schema": "EmployeeContract",
+      "description": "Collection of employment contracts and expiry details"
+    },
+    "professions": {
+      "schema": "EmployeeProfession",
+      "description": "Collection of credentials and degrees"
+    },
+    "deductions": {
+      "schema": "EmployeeDeduction",
+      "description": "Collection of personal withholding rates"
+    },
+    "docs": {
+      "schema": "CompanyDoc",
+      "description": "Collection of company wide template files and documents"
+    },
+    "tasks": {
+      "schema": "Task",
+      "description": "Collection of tasks on the Kanban tracking board"
+    },
+    "deductionTypes": {
+      "schema": "DeductionType",
+      "description": "Collection of global deduction categories and metrics"
+    },
+    "rbacUsers": {
+      "schema": "RBACUser",
+      "description": "Collection of system access user accounts"
+    },
+    "rbacRoles": {
+      "schema": "RBACRole",
+      "description": "Collection of dynamic organizational roles"
+    },
+    "rbacPermissions": {
+      "schema": "RBACPermission",
+      "description": "Collection of authorization permissions"
+    },
+    "assets": {
+      "schema": "EmployeeAsset",
+      "description": "Collection of physical and digital assets under inventory custody"
+    },
+    "assetHistory": {
+      "schema": "AssetHistory",
+      "description": "Log of asset status adjustments and employee custody handovers"
+    }
+  }
+}

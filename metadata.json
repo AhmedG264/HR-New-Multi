@@ -1,0 +1,8 @@
+{
+  "name": "Remix سحابة الأعمال — نظام إدارة الموارد البشرية",
+  "description": "النظام المتكامل لإدارة الموارد البشرية والرواتب والامتثال المتوافق مع أنظمة العمل والمؤسسة العامة للتأمينات الاجتماعية في المملكة العربية السعودية.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
