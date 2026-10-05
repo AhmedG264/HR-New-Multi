@@ -7,6 +7,20 @@ import React, { useState } from 'react';
 import { useHR } from '../context/HRContext';
 import { Employee } from '../types';
 import { exportEmployeesListCSV, printOfficialReport } from '../utils/exportUtils';
+import {
+  CURRENCIES,
+  WORK_TYPES,
+  CONTRACT_TYPES,
+  DEFAULT_CURRENCY,
+  DEFAULT_WORK_TYPE,
+  DEFAULT_CONTRACT_TYPE,
+  UNSPECIFIED_LABEL,
+  getCurrencySymbol,
+  formatMoney,
+  sumByCurrency,
+  formatCurrencyTotals
+} from '../utils/employmentOptions';
+import { isSaudiEmployee } from '../utils/nationality';
 import { ConfirmationModal } from './ConfirmationModal';
 
 export const Employees: React.FC = () => {
@@ -16,6 +30,7 @@ export const Employees: React.FC = () => {
     updateEmployee, 
     deleteEmployee,
     contracts,
+    updateContract,
     professions,
     deductions,
     setCurrentView,
@@ -38,6 +53,9 @@ export const Employees: React.FC = () => {
   const [fAllow, setFAllow] = useState('');
   const [fDeduct, setFDeduct] = useState('');
   const [fStatus, setFStatus] = useState<'نشط' | 'إجازة' | 'موقوف'>('نشط');
+  const [fCurrency, setFCurrency] = useState<string>(DEFAULT_CURRENCY);
+  const [fWorkType, setFWorkType] = useState<string>(DEFAULT_WORK_TYPE);
+  const [fContractType, setFContractType] = useState<string>(DEFAULT_CONTRACT_TYPE);
 
   // Search/Filter state
   const [searchTerm, setSearchTerm] = useState('');
@@ -46,6 +64,18 @@ export const Employees: React.FC = () => {
 
   const depts = ['تقنية المعلومات', 'الموارد البشرية', 'المالية', 'التسوق', 'المبيعات', 'العمليات'];
   const statuses: ('نشط' | 'إجازة' | 'موقوف')[] = ['نشط', 'إجازة', 'موقوف'];
+
+  // Visual identity per work arrangement (on-site / remote / hybrid)
+  const workTypeStyle = (workType?: string) => {
+    switch (workType) {
+      case 'عن بعد':
+        return { cls: 'bg-indigo-50 text-indigo-600 border-indigo-200', icon: '🏠' };
+      case 'هجين':
+        return { cls: 'bg-violet-50 text-violet-600 border-violet-200', icon: '🔀' };
+      default:
+        return { cls: 'bg-slate-50 text-slate-600 border-slate-200', icon: '🏢' };
+    }
+  };
 
   const getDaysLeft = (dateStr: string | undefined) => {
     if (!dateStr || dateStr === '-' || dateStr === '') return null;
@@ -63,6 +93,9 @@ export const Employees: React.FC = () => {
       setFAllow(emp.allow.toString());
       setFDeduct(emp.deduct.toString());
       setFStatus(emp.status);
+      setFCurrency(emp.currency || DEFAULT_CURRENCY);
+      setFWorkType(emp.workType || DEFAULT_WORK_TYPE);
+      setFContractType(emp.contractType || DEFAULT_CONTRACT_TYPE);
     } else {
       setEditingEmployee(null);
       setFName('');
@@ -72,6 +105,9 @@ export const Employees: React.FC = () => {
       setFAllow('');
       setFDeduct('0');
       setFStatus('نشط');
+      setFCurrency(DEFAULT_CURRENCY);
+      setFWorkType(DEFAULT_WORK_TYPE);
+      setFContractType(DEFAULT_CONTRACT_TYPE);
     }
     setShowModal(true);
   };
@@ -93,6 +129,9 @@ export const Employees: React.FC = () => {
         allow: Number(fAllow) || 0,
         deduct: Number(fDeduct) || 0,
         status: fStatus,
+        currency: fCurrency,
+        workType: fWorkType,
+        contractType: fContractType,
         hire: editingEmployee ? editingEmployee.hire : new Date().toISOString().slice(0, 10),
         leaveBalance: editingEmployee ? editingEmployee.leaveBalance : 21,
         perf: editingEmployee ? editingEmployee.perf : 4.0
@@ -100,6 +139,11 @@ export const Employees: React.FC = () => {
 
       if (editingEmployee) {
         await updateEmployee(editingEmployee.id, payload);
+        // Keep the signed contract record aligned with the engagement type
+        const linkedContract = contracts?.find(c => c.id === 'cont_' + editingEmployee.id);
+        if (linkedContract && linkedContract.type !== fContractType) {
+          await updateContract(editingEmployee.id, { type: fContractType });
+        }
       } else {
         await addEmployee(payload);
       }
@@ -148,7 +192,14 @@ export const Employees: React.FC = () => {
   const activeCount = employees.filter(e => e.status === 'نشط').length;
   const leaveCount = employees.filter(e => e.status === 'إجازة').length;
   const suspendedCount = employees.filter(e => e.status === 'موقوف').length;
-  const totalPayrollBill = employees.reduce((acc, curr) => acc + curr.salary + curr.allow, 0);
+  // Salary packages may be issued in different currencies, so totals are grouped
+  // per currency instead of being summed into one misleading figure.
+  const payrollByCurrency = sumByCurrency<Employee>(employees, e => e.salary + e.allow, e => e.currency);
+  const primaryPayroll = payrollByCurrency[0];
+  const otherPayrolls = payrollByCurrency.slice(1);
+
+  // Symbol of the currency selected in the open form (labels + placeholders)
+  const currencySymbol = getCurrencySymbol(fCurrency);
 
   const handleExportPDF = () => {
     const tableHTML = `
@@ -160,6 +211,9 @@ export const Employees: React.FC = () => {
             <th>القسم</th>
             <th>الراتب الأساسي</th>
             <th>البدلات</th>
+            <th>العملة</th>
+            <th>نوع العمل</th>
+            <th>نوع العقد</th>
             <th>تاريخ التعيين</th>
             <th>الحالة</th>
           </tr>
@@ -170,8 +224,11 @@ export const Employees: React.FC = () => {
               <td><strong>${e.name}</strong></td>
               <td>${e.job}</td>
               <td>${e.dept}</td>
-              <td style="font-family: monospace;">${e.salary.toLocaleString()} ر.س</td>
-              <td style="font-family: monospace;">${e.allow.toLocaleString()} ر.س</td>
+              <td style="font-family: monospace;">${formatMoney(e.salary, e.currency)}</td>
+              <td style="font-family: monospace;">${formatMoney(e.allow, e.currency)}</td>
+              <td>${e.currency || DEFAULT_CURRENCY}</td>
+              <td>${e.workType || UNSPECIFIED_LABEL}</td>
+              <td>${e.contractType || UNSPECIFIED_LABEL}</td>
               <td>${e.hire}</td>
               <td>${e.status}</td>
             </tr>
@@ -183,7 +240,7 @@ export const Employees: React.FC = () => {
       'بيان السجل الإداري الشامل للكوادر البشرية والامتثال',
       tableHTML,
       filteredEmployees.length.toString(),
-      filteredEmployees.reduce((sum, e) => sum + e.salary + e.allow, 0).toLocaleString() + ' ر.س'
+      formatCurrencyTotals(sumByCurrency<Employee>(filteredEmployees, e => e.salary + e.allow, e => e.currency))
     );
   };
 
@@ -243,9 +300,14 @@ export const Employees: React.FC = () => {
         <div className="bg-white border border-slate-250 rounded-xl p-4 shadow-sm col-span-2 md:col-span-1 bg-gradient-to-br from-slate-50 to-amber-50/20">
           <p className="text-[11px] font-bold text-amber-700">فاتورة الأجور الشاملة</p>
           <div className="flex justify-between items-baseline mt-1">
-            <span className="text-base font-bold text-amber-800">{totalPayrollBill.toLocaleString()}</span>
-            <span className="text-[10px] text-slate-500 font-bold">ر.س / شهر</span>
+            <span className="text-base font-bold text-amber-800">{(primaryPayroll?.total || 0).toLocaleString()}</span>
+            <span className="text-[10px] text-slate-500 font-bold">{getCurrencySymbol(primaryPayroll?.code)} / شهر</span>
           </div>
+          {otherPayrolls.length > 0 && (
+            <p className="text-[9px] text-slate-500 font-bold mt-0.5" title="فاتورة الأجور موزعة حسب عملة كل موظف">
+              + {otherPayrolls.map(t => formatMoney(t.total, t.code)).join(' + ')}
+            </p>
+          )}
           <button 
             onClick={() => setCurrentView('payroll')}
             className="text-[10px] text-amber-600 font-bold hover:underline bg-transparent border-none cursor-pointer mt-1 block"
@@ -322,7 +384,7 @@ export const Employees: React.FC = () => {
                 <th className="p-3 text-right">الموظف والمعلومات الأساسية</th>
                 <th className="p-3">المسمى الوظيفي والمهنة</th>
                 <th className="p-3">القسم</th>
-                <th className="p-3">الحزمة المالية (أساسي + بدلات)</th>
+                <th className="p-3">الحزمة المالية (أساسي + بدلات) بعملة الموظف</th>
                 <th className="p-3">التأمينات والخصومات</th>
                 <th className="p-3">الحالة والامتثال</th>
                 <th className="p-3 text-center">إجراءات الإدارة والمطابقة</th>
@@ -347,6 +409,8 @@ export const Employees: React.FC = () => {
                   const empDeduction = deductions?.find(d => d.empId === e.id);
                   const empProf = professions?.find(p => p.empId === e.id);
 
+                  const isSaudi = isSaudiEmployee(e, empContract);
+
                   // Extract specific compliance warnings
                   const iqamaDaysLeft = empContract ? getDaysLeft(empContract.iqamaExp) : null;
                   const contractDaysLeft = empContract ? getDaysLeft(empContract.end) : null;
@@ -362,7 +426,19 @@ export const Employees: React.FC = () => {
                             {e.name[0]}
                           </div>
                           <div>
-                            <span className="text-slate-800 text-sm font-bold block">{e.name}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-slate-800 text-sm font-bold">{e.name}</span>
+                              <span
+                                className={`text-[9px] font-bold border px-1.5 py-0.5 rounded shrink-0 ${
+                                  isSaudi
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                    : 'bg-sky-50 text-sky-700 border-sky-100'
+                                }`}
+                                title="أهليّة الجنسية"
+                              >
+                                {isSaudi ? 'سعودي' : 'وافد مقيم'}
+                              </span>
+                            </div>
                             <span className="text-[10px] text-slate-400 font-mono block mt-0.5">ID: {e.id} | ت: {e.hire}</span>
                           </div>
                         </div>
@@ -370,20 +446,39 @@ export const Employees: React.FC = () => {
                       <td className="p-3 text-slate-700">
                         <span className="font-semibold block">{e.job}</span>
                         <span className="text-[10px] text-slate-400 block mt-0.5">المهنة: {empProf?.specialty || 'غير محددة'}</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {e.workType && (
+                            <span
+                              className={`text-[9px] font-bold border px-1.5 py-0.5 rounded ${workTypeStyle(e.workType).cls}`}
+                              title="نوع العمل / مقر تنفيذ المهام"
+                            >
+                              {workTypeStyle(e.workType).icon} {e.workType}
+                            </span>
+                          )}
+                          {(e.contractType || empContract?.type) && (
+                            <span
+                              className="text-[9px] font-bold border border-sky-200 bg-sky-50 text-sky-700 px-1.5 py-0.5 rounded"
+                              title="نوع العقد ودرجة الالتزام بالدوام"
+                            >
+                              ⏱️ {e.contractType || empContract?.type}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="p-3 text-slate-500">
                         <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-xs">{e.dept}</span>
                       </td>
                       <td className="p-3">
                         <div className="space-y-0.5">
-                          <p className="font-semibold text-slate-700 text-xs">الأساسي: {e.salary.toLocaleString()} ر.س</p>
-                          <p className="text-emerald-600 text-[11px] font-medium">البدلات: +{e.allow.toLocaleString()} ر.س</p>
+                          <p className="font-semibold text-slate-700 text-xs">الأساسي: {formatMoney(e.salary, e.currency)}</p>
+                          <p className="text-emerald-600 text-[11px] font-medium">البدلات: +{formatMoney(e.allow, e.currency)}</p>
+                          {e.currency && <p className="text-[9px] text-slate-400 font-bold">عملة الصرف: {e.currency}</p>}
                         </div>
                       </td>
                       <td className="p-3">
                         <div className="space-y-0.5 text-xs text-slate-500">
                           <p>GOSI: <span className="font-semibold text-slate-700">{empDeduction?.gosiPct || '9.75'}%</span></p>
-                          <p className="text-[10px] text-rose-500 font-medium">الخصم المباشر: {e.deduct.toLocaleString()} ر.س</p>
+                          <p className="text-[10px] text-rose-500 font-medium">الخصم المباشر: {formatMoney(e.deduct, e.currency)}</p>
                         </div>
                       </td>
                       <td className="p-3">
@@ -523,33 +618,72 @@ export const Employees: React.FC = () => {
                 </div>
               </div>
 
+              {/* Employment nature: where the work happens and how it is contracted */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-slate-400">نوع العمل</label>
+                  <select
+                    className="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-gold bg-slate-50"
+                    value={fWorkType}
+                    onChange={(e) => setFWorkType(e.target.value)}
+                  >
+                    {WORK_TYPES.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-slate-400">نوع العقد</label>
+                  <select
+                    className="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-gold bg-slate-50"
+                    value={fContractType}
+                    onChange={(e) => setFContractType(e.target.value)}
+                  >
+                    {CONTRACT_TYPES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Salary currency: drives every amount rendered for this employee */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-400">عملة الراتب والمستحقات</label>
+                <select
+                  className="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-gold bg-slate-50"
+                  value={fCurrency}
+                  onChange={(e) => setFCurrency(e.target.value)}
+                >
+                  {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
+                </select>
+                <span className="text-[10px] text-slate-400 leading-relaxed">
+                  تُطبَّق هذه العملة على الراتب الأساسي والبدلات والخصومات لهذا الموظف (مثال: سعودي ← ريال، مصري ← جنيه).
+                </span>
+              </div>
+
               <div className="grid grid-cols-3 gap-3">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-slate-400">الراتب الأساسي *</label>
+                  <label className="text-xs font-bold text-slate-400">الراتب الأساسي ({currencySymbol}) *</label>
                   <input
                     type="number"
                     required
-                    placeholder="ر.س"
+                    placeholder={currencySymbol}
                     className="border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold bg-slate-50"
                     value={fSalary}
                     onChange={(e) => setFSalary(e.target.value)}
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-slate-400">البدلات</label>
+                  <label className="text-xs font-bold text-slate-400">البدلات ({currencySymbol})</label>
                   <input
                     type="number"
-                    placeholder="ر.س"
+                    placeholder={currencySymbol}
                     className="border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold bg-slate-50"
                     value={fAllow}
                     onChange={(e) => setFAllow(e.target.value)}
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-slate-400">الخصومات</label>
+                  <label className="text-xs font-bold text-slate-400">الخصومات ({currencySymbol})</label>
                   <input
                     type="number"
-                    placeholder="ر.س"
+                    placeholder={currencySymbol}
                     className="border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold bg-slate-50"
                     value={fDeduct}
                     onChange={(e) => setFDeduct(e.target.value)}

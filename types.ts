@@ -15,6 +15,11 @@ export interface Employee {
   hire: string;
   leaveBalance: number;
   perf: number;
+  currency?: string; // ISO 4217 code of the salary package, e.g. "SAR" | "EGP"
+  workType?: string; // e.g. "من مقر الشركة" | "عن بعد" | "هجين"
+  contractType?: string; // e.g. "دوام كامل" | "دوام جزئي" | "بالمهمة"
+  nationality?: string;
+  isSaudi?: boolean;
 }
 
 export interface Leave {

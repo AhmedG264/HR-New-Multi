@@ -79,7 +79,10 @@ service cloud.firestore {
         && data.job is string && data.job.size() <= 200
         && data.dept is string && data.dept.size() <= 200
         && data.salary is number
-        && data.status in ['نشط', 'إجازة', 'موقوف'];
+        && data.status in ['نشط', 'إجازة', 'موقوف']
+        && (!('currency' in data) || (data.currency is string && data.currency.size() <= 10))
+        && (!('workType' in data) || (data.workType is string && data.workType.size() <= 100))
+        && (!('contractType' in data) || (data.contractType is string && data.contractType.size() <= 100));
     }
 
     function isValidLeave(data) {

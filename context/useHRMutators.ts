@@ -75,7 +75,7 @@ export function useHRMutators({
     const newContract: EmployeeContract = {
       id: 'cont_' + newId,
       empId: newId,
-      type: 'دوام كامل',
+      type: emp.contractType || 'دوام كامل',
       start: emp.hire,
       end: '',
       renewed: '-',

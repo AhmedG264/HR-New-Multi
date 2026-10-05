@@ -4,6 +4,7 @@
  */
 
 import { Employee, EmployeeDeduction } from '../types';
+import { DEFAULT_CURRENCY, UNSPECIFIED_LABEL } from './employmentOptions';
 
 /**
  * Escapes fields to safely output to a CSV format.
@@ -42,12 +43,15 @@ export const exportToCSV = (filename: string, headers: string[], rows: (string |
  * Helper to export the Employees list specifically
  */
 export const exportEmployeesListCSV = (employees: Employee[]) => {
-  const headers = ['المعرف', 'الاسم الكامل', 'المسمى الوظيفي', 'القسم', 'الراتب الأساسي (ر.س)', 'البدلات (ر.س)', 'الخصومات المباشرة (ر.س)', 'الحالة', 'تاريخ التعيين', 'رصيد الإجازات المتبقي'];
+  const headers = ['المعرف', 'الاسم الكامل', 'المسمى الوظيفي', 'القسم', 'نوع العمل', 'نوع العقد', 'العملة', 'الراتب الأساسي', 'البدلات', 'الخصومات المباشرة', 'الحالة', 'تاريخ التعيين', 'رصيد الإجازات المتبقي'];
   const rows = employees.map(e => [
     e.id,
     e.name,
     e.job,
     e.dept,
+    e.workType || UNSPECIFIED_LABEL,
+    e.contractType || UNSPECIFIED_LABEL,
+    e.currency || DEFAULT_CURRENCY,
     e.salary,
     e.allow,
     e.deduct,

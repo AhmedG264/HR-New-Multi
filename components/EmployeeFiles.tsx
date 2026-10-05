@@ -9,6 +9,7 @@ import { Employee, EmployeeContract, EmployeeProfession, EmployeeDeduction } fro
 import { AssetsTab } from './AssetsTab';
 import { exportToCSV } from '../utils/exportUtils';
 import { processAttachedFile } from '../utils/fileUtils';
+import { isSaudiEmployee } from '../utils/nationality';
 import {
   Search,
   User,
@@ -278,7 +279,7 @@ export const EmployeeFiles: React.FC = () => {
 
   const saudiEmployeesCount = employees.filter(e => {
     const c = contracts.find(x => x.empId === e.id);
-    return !c?.iqamaExp; // Native Saudis do not have Expat Residence (Iqama Expiry) seeded
+    return isSaudiEmployee(e, c);
   }).length;
   const saudizationPct = employees.length > 0 ? Math.round((saudiEmployeesCount / employees.length) * 100) : 0;
 
@@ -425,26 +426,28 @@ export const EmployeeFiles: React.FC = () => {
             </div>
 
             {/* Iqama residence only for wafeedeen */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-slate-450">تاريخ انتهاء الإقامة (للوافدين فقط)</label>
-                <input
-                  type="date"
-                  className="border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-gold bg-slate-50 font-mono"
-                  value={fIqama}
-                  onChange={(e) => setFIqama(e.target.value)}
-                />
+            {!activeContractIsSaudi && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-slate-450">تاريخ انتهاء الإقامة (للوافدين فقط)</label>
+                  <input
+                    type="date"
+                    className="border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-gold bg-slate-50 font-mono"
+                    value={fIqama}
+                    onChange={(e) => setFIqama(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-slate-450">تاريخ انتهاء رخصة العمل البلدية</label>
+                  <input
+                    type="date"
+                    className="border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-gold bg-slate-50 font-mono"
+                    value={fPermit}
+                    onChange={(e) => setFPermit(e.target.value)}
+                  />
+                </div>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-slate-450">تاريخ انتهاء رخصة العمل البلدية</label>
-                <input
-                  type="date"
-                  className="border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-gold bg-slate-50 font-mono"
-                  value={fPermit}
-                  onChange={(e) => setFPermit(e.target.value)}
-                />
-              </div>
-            </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
@@ -1013,6 +1016,11 @@ export const EmployeeFiles: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  // Residency papers are issued to expatriates only, so the contract modal hides
+  // those two dates when the employee whose contract is open is a citizen.
+  const activeContractEmployee = activeContract ? employees.find(x => x.id === activeContract.empId) : null;
+  const activeContractIsSaudi = isSaudiEmployee(activeContractEmployee, activeContract);
+
   // Filters application
   const filteredEmployees = employees.filter((e) => {
     const contract = contracts.find(c => c.empId === e.id);
@@ -1022,8 +1030,7 @@ export const EmployeeFiles: React.FC = () => {
 
     const matchesDept = deptFilter === 'الكل' || e.dept === deptFilter;
 
-    // Nationality filter helper (Saudis typically don't have contract.iqamaExp seeded in default_contracts)
-    const isSaudi = contract ? !contract.iqamaExp : true;
+    const isSaudi = isSaudiEmployee(e, contract);
     const matchesNationality = nationalityFilter === 'الكل' ||
       (nationalityFilter === 'سعودي' && isSaudi) ||
       (nationalityFilter === 'مقيم' && !isSaudi);
@@ -1161,7 +1168,7 @@ export const EmployeeFiles: React.FC = () => {
                   }`}>
                   ● {e.status}
                 </span>
-                {contract.iqamaExp ? (
+                {!isSaudiEmployee(e, contract) ? (
                   <span className="bg-sky-50 text-sky-700 border border-sky-100 text-[10px] sm:text-xs px-2.5 py-0.5 rounded-full font-semibold">
                     🌏 موظف مقيم (وافد)
                   </span>
@@ -2317,7 +2324,7 @@ export const EmployeeFiles: React.FC = () => {
               ) : (
                 filteredEmployees.map((e) => {
                   const contract = contracts.find(c => c.empId === e.id);
-                  const isSaudi = contract ? !contract.iqamaExp : true;
+                  const isSaudi = isSaudiEmployee(e, contract);
                   return (
                     <tr key={e.id} className="hover:bg-slate-50/50 group transition duration-150">
 
