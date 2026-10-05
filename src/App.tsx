@@ -28,10 +28,14 @@ import { RBACUsers } from '../components/RBACUsers';
 import { RBACRoles } from '../components/RBACRoles';
 import { HealthInsuranceManager } from '../components/HealthInsuranceManager';
 import { ReportsAndStats } from '../components/ReportsAndStats';
+import { CompanyStatusNotice } from '../components/CompanyStatusNotice';
+import { CompanyApprovalManager } from '../components/CompanyApprovalManager';
 
 const AppContent: React.FC = () => {
   const {
     currentUser,
+    currentCompany,
+    logout,
     firebaseAuthReady,
     currentView,
     loading,
@@ -39,46 +43,12 @@ const AppContent: React.FC = () => {
     seedStatus
   } = useHR();
 
-  const [showLocalFallbackBtn, setShowLocalFallbackBtn] = React.useState(false);
-
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      if (!firebaseAuthReady) {
-        setShowLocalFallbackBtn(true);
-      }
-    }, 3000); // 3 seconds timeout
-    return () => clearTimeout(timer);
-  }, [firebaseAuthReady]);
-
-  const isLocalSession = localStorage.getItem('sahaba_session_type') === 'local';
-
-  const handleBypassToLocal = () => {
-    localStorage.setItem('sahaba_session_type', 'local');
-    window.location.reload();
-  };
-
-  // Wait for Firebase Authentication initialization before showing anything,
-  // except when running a local fallback session.
-  if (!firebaseAuthReady && !isLocalSession) {
+  // Wait for Firebase Authentication initialization before showing anything.
+  if (!firebaseAuthReady) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 font-sans p-4" dir="rtl">
         <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-4"></div>
         <p className="text-slate-700 font-semibold text-center">جاري تهيئة الاتصال السحابي الآمن سحابة الأعمال...</p>
-        
-        {showLocalFallbackBtn && (
-          <div className="mt-8 max-w-md w-full bg-white border border-slate-200 rounded-2xl p-6 shadow-md text-center animate-in fade-in slide-in-from-bottom-4 duration-300">
-            <p className="text-xs text-amber-700 font-bold mb-2">💡 ملاحظة الاتصال بقاعدة البيانات</p>
-            <p className="text-xs text-slate-500 leading-relaxed mb-4">
-              يبدو أن الاتصال بخوادم غوغل السحابية يستغرق وقتاً أطول من المعتاد. قد يكون هذا بسبب قيود جدار الحماية، VPN أو سرعة الشبكة.
-            </p>
-            <button
-              onClick={handleBypassToLocal}
-              className="w-full bg-slate-850 hover:bg-slate-900 text-white font-bold text-xs py-3 px-4 rounded-xl transition duration-150 cursor-pointer shadow-xs"
-            >
-              الاستمرار بوضعية العمل المحلي (تخطي الانتظار)
-            </button>
-          </div>
-        )}
       </div>
     );
   }
@@ -88,9 +58,25 @@ const AppContent: React.FC = () => {
     return <Login />;
   }
 
+  // For normal company users: enforce company approval lifecycle status restrictions
+  if (!currentUser.isSuperAdmin) {
+    const compStatus = currentCompany?.status || 'active';
+    if (compStatus === 'pending' || currentUser.status === 'pending') {
+      return <CompanyStatusNotice status="pending" company={currentCompany} onLogout={logout} />;
+    }
+    if (compStatus === 'rejected') {
+      return <CompanyStatusNotice status="rejected" company={currentCompany} onLogout={logout} />;
+    }
+    if (compStatus === 'suspended') {
+      return <CompanyStatusNotice status="suspended" company={currentCompany} onLogout={logout} />;
+    }
+  }
+
   // Render the selected view inside the layout.
   const renderView = () => {
     switch (currentView) {
+      case 'company-approvals':
+        return currentUser.isSuperAdmin ? <CompanyApprovalManager /> : <Dashboard />;
       case 'dashboard':
         return <Dashboard />;
       case 'ess':

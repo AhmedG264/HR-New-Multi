@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useHR } from '../context/HRContext';
-import { ChevronDown, Lock, LogOut } from 'lucide-react';
+import { ChevronDown, Lock, LogOut, Building2 } from 'lucide-react';
 import logo from './logo.png';
 
 interface MenuItem {
@@ -16,7 +16,19 @@ interface MenuSection {
 }
 
 export const Sidebar: React.FC = () => {
-  const { currentView, setCurrentView, setSelectedEmployeeId, currentUser, currentRole, hasPermission, logout } = useHR();
+  const {
+    currentView,
+    setCurrentView,
+    setSelectedEmployeeId,
+    currentUser,
+    currentRole,
+    hasPermission,
+    logout,
+    currentCompany,
+    currentCompanyId,
+    allCompanies,
+    switchCompany
+  } = useHR();
 
   // Expanded sections state. Default all to true.
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
@@ -108,21 +120,71 @@ export const Sidebar: React.FC = () => {
       <div className="h-0.5 w-full bg-[#00875A]" />
 
       {/* Brand Header */}
-      <div className="p-5 border-b border-slate-150 flex items-center gap-3">
-        <div className="w-11 h-11 bg-emerald-50 rounded-xl flex items-center justify-center border border-emerald-100 shrink-0 overflow-hidden">
-          <img
-            src={logo}
-            alt="سحابة الأعمال"
-            className="w-full h-full object-contain"
-          />
+      <div className="p-4 border-b border-slate-150">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center border border-emerald-100 shrink-0 overflow-hidden">
+            <img
+              src={logo}
+              alt="سحابة الأعمال"
+              className="w-full h-full object-contain"
+            />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xs font-black text-slate-800 leading-tight truncate">سحابة الأعمال</h1>
+            <p className="text-[10px] text-emerald-700 font-bold truncate mt-0.5 flex items-center gap-1">
+              <Building2 className="w-3 h-3 shrink-0" />
+              <span className="truncate">{currentCompany?.name || 'شركة سحابة الأعمال'}</span>
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-sm font-bold text-slate-800 leading-tight">سحابة الأعمال</h1>
-        </div>
+
+        {/* Super Admin Company Switcher (Requirement #8) */}
+        {currentUser?.isSuperAdmin && allCompanies.length > 0 && (
+          <div className="mt-3 pt-2.5 border-t border-slate-150">
+            <label className="text-[9px] font-bold text-amber-700 block mb-1">
+              👑 نطاق المنشأة (المشرف العام)
+            </label>
+            <select
+              value={currentCompanyId}
+              onChange={(e) => switchCompany(e.target.value)}
+              className="w-full text-[10px] font-semibold bg-slate-50 border border-slate-200 rounded-lg p-1.5 focus:border-[#00875A] focus:outline-hidden"
+            >
+              {allCompanies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} {c.id === 'company_default' ? '(الرئيسية)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Nav Content */}
       <div className="flex-1 overflow-y-auto px-2 py-3 custom-scrollbar space-y-2">
+        {/* Super Admin Company Approvals Quick Launcher */}
+        {currentUser?.isSuperAdmin && (
+          <div className="mb-2 pb-2 border-b border-slate-200">
+            <button
+              onClick={() => handleNavigate('company-approvals')}
+              className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all text-right cursor-pointer ${
+                currentView === 'company-approvals'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <span>🏢</span>
+                <span>إدارة واعتماد المنشآت</span>
+              </span>
+              {allCompanies.filter(c => c.status === 'pending').length > 0 && (
+                <span className="bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
+                  {allCompanies.filter(c => c.status === 'pending').length}
+                </span>
+              )}
+            </button>
+          </div>
+        )}
+
         {menu.map((section, idx) => {
           // If all items inside this section are locked for current simulation user, we can hide/disable the section header
           const visibleItems = section.items.filter(item => hasPermission(item.requiredPermission));

@@ -1,5 +1,22 @@
 {
   "entities": {
+    "Company": {
+      "title": "Company",
+      "description": "Represents an organizational tenant/company profile in the multi-tenant system",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "crNumber": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "adminEmail": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "suspended"] }
+      },
+      "required": ["id", "name", "adminUid", "adminEmail", "createdAt"]
+    },
     "Employee": {
       "title": "Employee",
       "description": "Represents an employee profile in the company",
@@ -418,6 +435,10 @@
     "assetHistory": {
       "schema": "AssetHistory",
       "description": "Log of asset status adjustments and employee custody handovers"
+    },
+    "companies": {
+      "schema": "Company",
+      "description": "Organizational tenant accounts and their isolated subcollections"
     }
   }
 }

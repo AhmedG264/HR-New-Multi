@@ -75,36 +75,32 @@ export function useHREntityData({ currentUser, currentView, firebaseAuthReady, l
   // Lazy loading state for on-demand collection fetching
   const [loadedViews, setLoadedViews] = useState<Record<string, boolean>>({});
 
-  const safeLoad = async <T,>(collName: string, setter: (data: T[]) => void, fallback: T[] = []) => {
-    // If the Firebase session is not signed in yet, use the local fallbacks immediately to prevent public permission/security errors
-    const isLocal = localStorage.getItem('sahaba_session_type') === 'local';
-    if (!auth.currentUser && !isLocal) {
-      setter(fallback);
-      return fallback;
+  const safeLoad = async <T,>(collName: string, setter: (data: T[]) => void, _fallback?: T[]) => {
+    if (!auth.currentUser) {
+      setter([]);
+      return [];
     }
     try {
       const data = await getCollectionData<T>(collName);
       if (data && data.length > 0) {
         setter(data);
         return data;
-      } else if (fallback && fallback.length > 0) {
-        console.warn(`Collection ${collName} is empty in database, using system fallbacks.`);
-        setter(fallback);
-        return fallback;
       }
+      setter([]);
       return [];
     } catch (error: any) {
       console.error(`Error loading database collection ${collName}: `, error);
-      if (fallback && fallback.length > 0) {
-        setter(fallback);
-        return fallback;
-      }
+      setter([]);
       return [];
     }
   };
 
   const loadViewData = async (viewName: string, forceRefresh = false) => {
     if (!currentUser) return; // Prevent querying Firestore before auth context is established
+    if (!currentUser.isSuperAdmin && currentUser.status === 'pending') {
+      setLoading(false);
+      return;
+    }
 
     // Check if stayed on-page and cached already
     if (!forceRefresh && loadedViews[viewName]) {
@@ -276,6 +272,8 @@ export function useHREntityData({ currentUser, currentView, firebaseAuthReady, l
           // useHRAuth, so delegate the lazy-load for these views to it.
           await loadRbacViewData(viewName);
           break;
+        case 'company-approvals':
+          break;
         default:
           break;
       }
@@ -341,12 +339,7 @@ export function useHREntityData({ currentUser, currentView, firebaseAuthReady, l
   useEffect(() => {
     if (!currentUser) return;
 
-    // A restored localStorage session can be ready before Firebase's own auth
-    // check finishes. Fetching too early makes safeLoad() fall back to mock data
-    // and cache it, so the real data never loads until a forced refresh.
-    // Local-fallback sessions never touch Firebase auth, so they skip the wait.
-    const isLocalSession = localStorage.getItem('sahaba_session_type') === 'local';
-    if (!firebaseAuthReady && !isLocalSession) return;
+    if (!firebaseAuthReady) return;
 
     loadViewData(currentView);
     // eslint-disable-next-line react-hooks/exhaustive-deps

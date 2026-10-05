@@ -61,6 +61,7 @@ export const HRProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       value={{
         loading: data.loading,
         loadError: data.loadError,
+        firebaseAuthReady: auth.firebaseAuthReady,
         currentView,
         setCurrentView,
         employees: data.employees,
@@ -141,6 +142,18 @@ export const HRProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         hasPermission: auth.hasPermission,
         login: auth.login,
         logout: auth.logout,
+        resetPassword: auth.resetPassword,
+
+        currentCompany: auth.currentCompany,
+        currentCompanyId: auth.currentCompanyId,
+        allCompanies: auth.allCompanies,
+        registerCompany: auth.registerCompany,
+        switchCompany: auth.switchCompany,
+        approveCompany: auth.approveCompany,
+        rejectCompany: auth.rejectCompany,
+        suspendCompany: auth.suspendCompany,
+        reactivateCompany: auth.reactivateCompany,
+        refreshCompanies: auth.refreshCompanies,
 
         addRBACUser: auth.addRBACUser,
         updateRBACUser: auth.updateRBACUser,

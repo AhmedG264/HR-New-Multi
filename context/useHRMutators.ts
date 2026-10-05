@@ -29,10 +29,13 @@ import {
   createDocumentWithoutId,
   updateDocument as dbUpdateDoc,
   deleteDocument as dbDeleteDoc,
-  cleanUndefined
+  cleanUndefined,
+  resolveCollectionRef,
+  resolveDocRef,
+  getActiveCompanyId
 } from '../services/db';
 import { db } from '../firebase';
-import { doc, collection, writeBatch } from 'firebase/firestore';
+import { doc, writeBatch } from 'firebase/firestore';
 
 interface UseHRMutatorsArgs {
   hasPermission: (permId: string) => boolean;
@@ -64,7 +67,7 @@ export function useHRMutators({
     if (!hasPermission('create_employee')) {
       throw new Error('HTTP 403 Forbidden: عذراً، لا تمتلك الصلاحية الأمنية لإضافة موظف بالسيستم.');
     }
-    const newId = doc(collection(db, 'employees')).id;
+    const newId = doc(resolveCollectionRef('employees')).id;
     const newEmp: Employee = { ...emp, id: newId };
     await createDocument('employees', newId, newEmp);
 
@@ -210,18 +213,19 @@ export function useHRMutators({
     if (!hasPermission('record_attendance')) {
       throw new Error('HTTP 403 Forbidden: عذراً، لا تمتلك الصلاحية الأمنية لتسجيل حضور بالسيستم.');
     }
+    const targetCompId = getActiveCompanyId();
     const batch = writeBatch(db);
     for (const rec of records) {
       const existing = attendance.find(
         a => a.empId === rec.empId && a.date === rec.date
       );
       if (existing) {
-        const docRef = doc(db, 'attendance', existing.id);
-        batch.update(docRef, cleanUndefined(rec) as any);
+        const docRef = resolveDocRef('attendance', existing.id, targetCompId);
+        batch.update(docRef, cleanUndefined({ ...rec, companyId: targetCompId }) as any);
       } else {
-        const randomId = doc(collection(db, 'attendance')).id;
-        const docRef = doc(db, 'attendance', randomId);
-        batch.set(docRef, cleanUndefined({ ...rec, id: randomId }));
+        const randomId = doc(resolveCollectionRef('attendance', targetCompId)).id;
+        const docRef = resolveDocRef('attendance', randomId, targetCompId);
+        batch.set(docRef, cleanUndefined({ ...rec, id: randomId, companyId: targetCompId }));
       }
     }
     await batch.commit();
@@ -428,7 +432,7 @@ export function useHRMutators({
     if (!hasPermission('create_asset')) {
       throw new Error('HTTP 403 Forbidden: عذراً، لا تمتلك الصلاحية الأمنية لإضافة أصل/عهدة جديدة بالسيستم.');
     }
-    const newId = doc(collection(db, 'assets')).id;
+    const newId = doc(resolveCollectionRef('assets')).id;
     const newAsset: EmployeeAsset = { ...asset, id: newId };
     await createDocument('assets', newId, newAsset);
 
@@ -436,7 +440,7 @@ export function useHRMutators({
     const matchingEmp = employees.find(e => e.id === asset.empId);
     const empName = matchingEmp ? matchingEmp.name : 'موظف غير معروف';
     const historyEntry: AssetHistory = {
-      id: doc(collection(db, 'assetHistory')).id,
+      id: doc(resolveCollectionRef('assetHistory')).id,
       assetId: newId,
       empId: asset.empId,
       empName,
@@ -462,7 +466,7 @@ export function useHRMutators({
     // If status changed, let's also write a history log automatically!
     if (partialAsset.status && prevAsset && prevAsset.status !== partialAsset.status) {
       const historyEntry: AssetHistory = {
-        id: doc(collection(db, 'assetHistory')).id,
+        id: doc(resolveCollectionRef('assetHistory')).id,
         assetId: id,
         empId: partialAsset.empId || prevAsset.empId,
         empName: employees.find(e => e.id === (partialAsset.empId || prevAsset.empId))?.name || 'موظف',
@@ -511,7 +515,7 @@ export function useHRMutators({
 
     // Write a history record automatically
     const historyEntry: AssetHistory = {
-      id: doc(collection(db, 'assetHistory')).id,
+      id: doc(resolveCollectionRef('assetHistory')).id,
       assetId: id,
       empId: prevAsset.empId,
       empName: employees.find(e => e.id === prevAsset.empId)?.name || 'موظف',
@@ -539,7 +543,7 @@ export function useHRMutators({
     if (!hasPermission('manage_asset_history')) {
       throw new Error('HTTP 403 Forbidden: لا تمتلك صلاحية إدارة وتحديث سجل تتبع الأصول.');
     }
-    const newId = doc(collection(db, 'assetHistory')).id;
+    const newId = doc(resolveCollectionRef('assetHistory')).id;
     const timestamp = new Date().toISOString();
     const entry: AssetHistory = { ...hist, id: newId, timestamp };
     await createDocument('assetHistory', newId, entry);

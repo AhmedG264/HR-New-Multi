@@ -24,10 +24,51 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // Since our app operates in a single company workplace, standard authenticated staff can edit documents.
-    // However, to enforce zero-trust security and prevent resource poisoning:
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == "ahmedgamal264@outlook.com" ||
+        (exists(/databases/$(database)/documents/rbacUsers/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/rbacUsers/$(request.auth.uid)).data.isSuperAdmin == true)
+      );
+    }
+
+    function getUserCompanyId() {
+      return exists(/databases/$(database)/documents/rbacUsers/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/rbacUsers/$(request.auth.uid)).data.companyId
+        : null;
+    }
+
+    function isCompanyOwner(companyId) {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/companies/$(companyId)) &&
+        get(/databases/$(database)/documents/companies/$(companyId)).data.adminUid == request.auth.uid
+      );
+    }
+
+    function isMemberOf(companyId) {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        isCompanyOwner(companyId) ||
+        getUserCompanyId() == companyId
+      );
+    }
+
     function isValidId(id) { 
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$'); 
+    }
+
+    function isValidCompany(data) {
+      return data.keys().hasAll(['id', 'name', 'adminUid', 'adminEmail', 'createdAt'])
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.adminUid is string && data.adminUid.size() <= 128
+        && data.adminEmail is string && data.adminEmail.size() <= 200
+        && data.createdAt is string && data.createdAt.size() <= 100
+        && (!('status' in data) || data.status in ['active', 'suspended', 'pending', 'rejected'])
+        && (!('rejectionReason' in data) || (data.rejectionReason is string && data.rejectionReason.size() <= 500))
+        && (!('crNumber' in data) || (data.crNumber is string && data.crNumber.size() <= 100))
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 50))
+        && (!('address' in data) || (data.address is string && data.address.size() <= 300));
     }
 
     // 3. Entity-specific schemas
@@ -165,12 +206,15 @@ service cloud.firestore {
 
     function isValidRBACUser(data) {
       return data.keys().hasAll(['id', 'fullName', 'username', 'empCode', 'roleId', 'status'])
-        && data.id is string
-        && data.fullName is string
-        && data.username is string
-        && data.empCode is string
-        && data.roleId is string
-        && data.status is string;
+        && data.id is string && data.id.size() <= 128
+        && data.fullName is string && data.fullName.size() <= 200
+        && data.username is string && data.username.size() <= 200
+        && data.empCode is string && data.empCode.size() <= 100
+        && data.roleId is string && data.roleId.size() <= 100
+        && data.status in ['active', 'inactive', 'pending']
+        && (!('companyId' in data) || (data.companyId is string && data.companyId.size() <= 128))
+        && (!('isSuperAdmin' in data) || data.isSuperAdmin is bool)
+        && (!('employeeId' in data) || (data.employeeId is string && data.employeeId.size() <= 128));
     }
 
     function isValidRBACRole(data) {
@@ -221,7 +265,7 @@ service cloud.firestore {
 
     function isDocEditor() {
       return isSignedIn() && (
-        request.auth.token.email == "mahmoudfahmyaly695@gmail.com" ||
+        request.auth.token.email == "ahmedgamal264@outlook.com" ||
         !exists(/databases/$(database)/documents/rbacUsers/$(request.auth.uid)) ||
         get(/databases/$(database)/documents/rbacUsers/$(request.auth.uid)).data.roleId == 'role_admin' ||
         get(/databases/$(database)/documents/rbacUsers/$(request.auth.uid)).data.roleId == 'role_hr'
@@ -242,137 +286,194 @@ service cloud.firestore {
     }
 
     /**
-     * Match Blocks with Schema Checks
+     * Match Blocks with Multi-Tenant Company Isolation
      */
-    match /employees/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidEmployee(incoming());
-      allow delete: if isSignedIn();
+
+    // Root-level companies collection
+    match /companies/{companyId} {
+      allow read: if isMemberOf(companyId);
+      allow create: if isSignedIn()
+        && isValidId(companyId)
+        && isValidCompany(incoming())
+        && incoming().id == companyId
+        && (incoming().adminUid == request.auth.uid || isSuperAdmin());
+      allow update: if isMemberOf(companyId)
+        && isValidCompany(incoming())
+        && incoming().id == companyId
+        && incoming().adminUid == existing().adminUid
+        && (isSuperAdmin() || (!('status' in incoming()) && !('status' in existing())) || incoming().status == existing().status);
+      allow delete: if isSuperAdmin();
+
+      // Tenant-isolated subcollections
+      match /employees/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidEmployee(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /leaves/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidLeave(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /attendance/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidAttendance(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /jobs/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidJob(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /candidates/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidCandidate(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /reviews/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidReview(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /trainings/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidTrainingCard(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /expenses/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidExpense(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /trips/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidTrip(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /health/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidHealth(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /contracts/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidContract(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /professions/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidProfession(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /deductions/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidDeduction(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /docs/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidDoc(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /tasks/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidTask(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /deductionTypes/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidDeductionType(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /rbacUsers/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidRBACUser(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /rbacRoles/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidRBACRole(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /rbacPermissions/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidRBACPermission(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /assets/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidEmployeeAsset(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
+
+      match /assetHistory/{id} {
+        allow read: if isMemberOf(companyId);
+        allow create, update: if isMemberOf(companyId) && isValidAssetHistory(incoming());
+        allow delete: if isMemberOf(companyId);
+      }
     }
 
-    match /leaves/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidLeave(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /attendance/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidAttendance(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /jobs/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidJob(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /candidates/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidCandidate(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /reviews/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidReview(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /trainings/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidTrainingCard(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /expenses/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidExpense(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /trips/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidTrip(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /health/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidHealth(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /contracts/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidContract(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /professions/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidProfession(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /deductions/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidDeduction(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /docs/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isDocEditor() && isValidDoc(incoming());
-      allow delete: if isDocEditor();
-    }
-
-    match /tasks/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidTask(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /deductionTypes/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidDeductionType(incoming());
-      allow delete: if isSignedIn();
-    }
-
+    // Global user routing registry (identifies which company each user belongs to)
     match /rbacUsers/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidRBACUser(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /rbacRoles/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidRBACRole(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /rbacPermissions/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidRBACPermission(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /assets/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidEmployeeAsset(incoming());
-      allow delete: if isSignedIn();
-    }
-
-    match /assetHistory/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && isValidAssetHistory(incoming());
-      allow delete: if isSignedIn();
+      allow read: if isSignedIn() && (
+        request.auth.uid == id ||
+        isSuperAdmin() ||
+        getUserCompanyId() == resource.data.companyId ||
+        (resource.data.companyId != null && isCompanyOwner(resource.data.companyId))
+      );
+      allow create: if isSignedIn() && (
+        request.auth.uid == id || isSuperAdmin()
+      ) && isValidRBACUser(incoming()) && incoming().id == id;
+      allow update: if isSignedIn() && (
+        request.auth.uid == id || isSuperAdmin()
+      ) && isValidRBACUser(incoming());
+      allow delete: if isSuperAdmin();
     }
 
     match /system_meta/{id} {
       allow read, write: if isSignedIn();
     }
+
+    // Legacy root collections preserved for migration & non-destructive rollback
+    match /employees/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /leaves/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /attendance/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /jobs/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /candidates/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /reviews/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /trainings/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /expenses/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /trips/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /health/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /contracts/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /professions/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /deductions/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /docs/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /tasks/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /deductionTypes/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /rbacRoles/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /rbacPermissions/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /assets/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
+    match /assetHistory/{id} { allow read: if isSignedIn(); allow write: if isSuperAdmin(); }
 
   }
 }

@@ -24,7 +24,8 @@ import {
   RBACRole,
   RBACPermission,
   EmployeeAsset,
-  AssetHistory
+  AssetHistory,
+  Company
 } from '../types';
 
 /** Lifecycle status of the one-time database seeding operation. */
@@ -38,6 +39,7 @@ export type SeedStatus = 'idle' | 'seeding' | 'done';
 export interface HRContextProps {
   loading: boolean;
   loadError: string | null;
+  firebaseAuthReady: boolean;
   currentView: string;
   setCurrentView: (view: string) => void;
   employees: Employee[];
@@ -144,6 +146,7 @@ export interface HRContextProps {
   hasPermission: (permId: string) => boolean;
   login: (username: string, password: string) => Promise<boolean>;
   logout: () => void;
+  resetPassword: (email: string) => Promise<void>;
 
   // RBAC User actions
   addRBACUser: (user: Omit<RBACUser, 'id'>) => Promise<void>;
@@ -154,6 +157,26 @@ export interface HRContextProps {
   addRBACRole: (role: Omit<RBACRole, 'id'>) => Promise<void>;
   updateRBACRole: (id: string, role: Partial<RBACRole>) => Promise<void>;
   deleteRBACRole: (id: string) => Promise<void>;
+
+  // Company & Multi-tenant actions
+  currentCompany: Company | null;
+  currentCompanyId: string;
+  allCompanies: Company[];
+  registerCompany: (data: {
+    companyName: string;
+    crNumber?: string;
+    adminName: string;
+    email: string;
+    password: string;
+    phone?: string;
+    address?: string;
+  }) => Promise<boolean>;
+  switchCompany: (companyId: string) => Promise<void>;
+  approveCompany: (companyId: string) => Promise<void>;
+  rejectCompany: (companyId: string, reason?: string) => Promise<void>;
+  suspendCompany: (companyId: string) => Promise<void>;
+  reactivateCompany: (companyId: string) => Promise<void>;
+  refreshCompanies: () => Promise<void>;
 
   loadViewData: (viewName: string, forceRefresh?: boolean) => Promise<void>;
 }

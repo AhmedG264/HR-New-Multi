@@ -203,6 +203,19 @@ export interface DeductionType {
   note?: string;
 }
 
+export interface Company {
+  id: string;
+  name: string;
+  crNumber?: string;
+  adminUid: string;
+  adminEmail: string;
+  createdAt: string;
+  phone?: string;
+  address?: string;
+  status: "pending" | "active" | "suspended" | "rejected";
+  rejectionReason?: string;
+}
+
 export interface RBACUser {
   id: string;
   fullName: string;
@@ -210,8 +223,10 @@ export interface RBACUser {
   password?: string;
   empCode: string;
   roleId: string;
-  status: "active" | "inactive";
+  status: "active" | "inactive" | "pending";
   employeeId?: string;
+  companyId?: string;
+  isSuperAdmin?: boolean;
 }
 
 export interface RBACRole {
@@ -219,6 +234,7 @@ export interface RBACRole {
   name: string;
   description?: string;
   permissionIds: string[];
+  companyId?: string;
 }
 
 export interface RBACPermission {

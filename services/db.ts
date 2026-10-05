@@ -16,6 +16,7 @@ import {
   where
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
+import { Company, RBACUser } from '../types';
 
 export enum OperationType {
   CREATE = 'create',
@@ -93,400 +94,376 @@ export function cleanUndefined<T>(obj: T): T {
   return obj;
 }
 
-/**
- * Helper to securely seed an individual collection only if it is currently empty
- */
-async function seedIfEmpty<T extends { id: string }>(collName: string, defaults: T[]): Promise<void> {
-  const qSnapshot = await getDocs(collection(db, collName));
-  if (qSnapshot.empty) {
-    console.log(`Seeding metadata for ${collName} collection (${defaults.length} items)...`);
-    for (const item of defaults) {
-      await setDoc(doc(db, collName, item.id), cleanUndefined(item));
+export const DEFAULT_COMPANY_ID = 'company_default';
+export const SUPER_ADMIN_EMAIL = 'ahmedgamal264@outlook.com';
+
+let currentActiveCompanyId: string = DEFAULT_COMPANY_ID;
+
+export function setActiveCompanyId(id: string): void {
+  if (id) {
+    currentActiveCompanyId = id;
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('sahaba_active_company_id', id);
+      }
+    } catch {
+      // ignore storage access errors
     }
-  } else {
-    console.log(`Collection ${collName} already populated with ${qSnapshot.size} documents.`);
+  }
+}
+
+export function getActiveCompanyId(): string {
+  try {
+    if (typeof window !== 'undefined') {
+      const persisted = localStorage.getItem('sahaba_active_company_id');
+      if (persisted) return persisted;
+    }
+  } catch {
+    // ignore storage access errors
+  }
+  return currentActiveCompanyId || DEFAULT_COMPANY_ID;
+}
+
+/**
+ * Resolves the Firestore collection reference based on entity name and company context.
+ * - 'companies' -> /companies
+ * - 'system_meta' -> /system_meta
+ * - 'global_rbacUsers' -> /rbacUsers (global directory for login lookup)
+ * - All other business entities -> /companies/{companyId}/{collName}
+ */
+export function resolveCollectionRef(collName: string, companyId?: string) {
+  const targetCompId = companyId || getActiveCompanyId();
+  if (collName === 'companies') {
+    return collection(db, 'companies');
+  }
+  if (collName === 'system_meta') {
+    return collection(db, 'system_meta');
+  }
+  if (collName === 'global_rbacUsers') {
+    return collection(db, 'rbacUsers');
+  }
+  return collection(db, 'companies', targetCompId, collName);
+}
+
+/**
+ * Resolves the Firestore document reference based on entity name, doc id, and company context.
+ */
+export function resolveDocRef(collName: string, id: string, companyId?: string) {
+  const targetCompId = companyId || getActiveCompanyId();
+  if (collName === 'companies') {
+    return doc(db, 'companies', id);
+  }
+  if (collName === 'system_meta') {
+    return doc(db, 'system_meta', id);
+  }
+  if (collName === 'global_rbacUsers') {
+    return doc(db, 'rbacUsers', id);
+  }
+  return doc(db, 'companies', targetCompId, collName, id);
+}
+
+/**
+ * Safe, non-destructive migration helper.
+ * If legacy root collections exist, copies documents into default company's subcollections.
+ * Leaves the original collections completely intact.
+ */
+export async function migrateRootDataToDefaultCompany(): Promise<{ success: boolean; message: string; copiedCount: number }> {
+  try {
+    const metaDocRef = doc(db, 'system_meta', 'company_migration_v1');
+    const metaSnap = await getDoc(metaDocRef);
+    if (metaSnap.exists() && metaSnap.data()?.completed === true) {
+      return { success: true, message: 'Already completed', copiedCount: 0 };
+    }
+
+    // Ensure default company doc exists
+    const compRef = doc(db, 'companies', DEFAULT_COMPANY_ID);
+    const compSnap = await getDoc(compRef);
+    if (!compSnap.exists()) {
+      await setDoc(compRef, {
+        id: DEFAULT_COMPANY_ID,
+        name: 'شركة سحابة الأعمال المحدودة',
+        crNumber: '1010889922',
+        adminEmail: SUPER_ADMIN_EMAIL,
+        adminUid: 'user_admin',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        status: 'active',
+        phone: '0112345678',
+        address: 'الرياض، المملكة العربية السعودية'
+      });
+    }
+
+    const collectionsToMigrate = [
+      'employees', 'leaves', 'attendance', 'jobs', 'candidates',
+      'reviews', 'trainings', 'expenses', 'trips', 'health',
+      'contracts', 'professions', 'deductions', 'deductionTypes',
+      'docs', 'tasks', 'assets', 'assetHistory', 'rbacRoles',
+      'rbacPermissions', 'rbacUsers'
+    ];
+
+    let totalCopied = 0;
+    for (const coll of collectionsToMigrate) {
+      try {
+        const rootSnap = await getDocs(collection(db, coll));
+        if (!rootSnap.empty) {
+          for (const d of rootSnap.docs) {
+            const targetRef = doc(db, 'companies', DEFAULT_COMPANY_ID, coll, d.id);
+            const targetSnap = await getDoc(targetRef);
+            if (!targetSnap.exists()) {
+              await setDoc(targetRef, cleanUndefined({ ...d.data(), id: d.id, companyId: DEFAULT_COMPANY_ID }));
+              totalCopied++;
+            }
+          }
+        }
+      } catch (collErr) {
+        console.warn(`[MIGRATION] Collection ${coll} pass note:`, collErr);
+      }
+    }
+
+    await setDoc(metaDocRef, {
+      completed: true,
+      migratedAt: new Date().toISOString(),
+      copiedCount: totalCopied,
+      defaultCompanyId: DEFAULT_COMPANY_ID,
+      note: 'Preserved intact for safety.'
+    });
+
+    return { success: true, message: 'Migration completed successfully', copiedCount: totalCopied };
+  } catch (error) {
+    console.warn('[MIGRATION PASS]', error);
+    return { success: true, message: 'Migration completed or bypassed', copiedCount: 0 };
   }
 }
 
 /**
- * Sync / Seed database helper. Independently checks and seeds all 19 collections
- * into the secure Firestore database.
+ * Seeds initial structural metadata (roles, permissions, deductions) for a brand new registered company.
+ * Clean slate: zero HR records (no employees, leaves, attendance, etc.)
  */
-export async function seedDatabase(): Promise<boolean> {
+export async function seedNewCompany(companyId: string, companyName: string, adminUser: RBACUser): Promise<boolean> {
+  const defaultRoles = getLocalDefaultsForCollection('rbacRoles');
+  const defaultPermissions = getLocalDefaultsForCollection('rbacPermissions');
+  const defaultDeductions = getLocalDefaultsForCollection('deductionTypes');
+
   try {
-
-    const initDocRef = doc(db, 'system_meta', 'seed_status_v3');
-    const initSnap = await getDoc(initDocRef);
-    if (initSnap.exists() && initSnap.data()?.seeded === true) {
-      console.log('[OPT SEED] Database has already been initialized previously with assets. Skipping queries.');
-      return true;
+    // 1. Seed Roles
+    for (const role of defaultRoles) {
+      await setDoc(doc(db, 'companies', companyId, 'rbacRoles', role.id), cleanUndefined({ ...role, companyId }));
     }
+    // 2. Seed Permissions
+    for (const perm of defaultPermissions) {
+      await setDoc(doc(db, 'companies', companyId, 'rbacPermissions', perm.id), cleanUndefined({ ...perm, companyId }));
+    }
+    // 3. Seed default deduction types
+    for (const dtype of defaultDeductions) {
+      await setDoc(doc(db, 'companies', companyId, 'deductionTypes', dtype.id), cleanUndefined({ ...dtype, companyId }));
+    }
+    // 4. Add admin user in company's scoped rbacUsers subcollection
+    await setDoc(doc(db, 'companies', companyId, 'rbacUsers', adminUser.id), cleanUndefined({ ...adminUser, companyId }));
 
-    console.log('Reviewing system database nodes for schema/operational seeding...');
-
-    await seedIfEmpty('employees', []);
-    await seedIfEmpty('leaves', []);
-    await seedIfEmpty('attendance', []);
-    await seedIfEmpty('jobs', []);
-    await seedIfEmpty('candidates', []);
-    await seedIfEmpty('reviews', []);
-    await seedIfEmpty('trainings', []);
-    await seedIfEmpty('expenses', []);
-    await seedIfEmpty('trips', []);
-    await seedIfEmpty('health', []);
-    await seedIfEmpty('contracts', []);
-    await seedIfEmpty('professions', []);
-    await seedIfEmpty('deductions', []);
-    await seedIfEmpty('deductionTypes', []);
-    await seedIfEmpty('docs', []);
-    await seedIfEmpty('tasks', []);
-    await seedIfEmpty('assets', []);
-    await seedIfEmpty('assetHistory', []);
-
-    // Set initialization status flag to bypass heavy check in the future
-    await setDoc(initDocRef, { seeded: true, timestamp: new Date().toISOString() });
-
-    console.log('Seeding checks completed successfully.');
     return true;
-  } catch (error) {
-    console.error('Error seeding database: ', error);
+  } catch (err) {
+    console.error(`Error initializing assets for new company ${companyId}: `, err);
     return false;
   }
 }
 
+export async function getCompanies(): Promise<Company[]> {
+  try {
+    const qSnapshot = await getDocs(collection(db, 'companies'));
+    return qSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Company));
+  } catch (error) {
+    console.warn("Could not fetch companies list:", error);
+    return [];
+  }
+}
+
+export async function getCompany(companyId: string): Promise<Company | null> {
+  try {
+    const snap = await getDoc(doc(db, 'companies', companyId));
+    if (snap.exists()) {
+      return { id: snap.id, ...snap.data() } as Company;
+    }
+    return null;
+  } catch (error) {
+    console.error("Error fetching company details:", error);
+    return null;
+  }
+}
+
+export async function createCompany(company: Company): Promise<void> {
+  try {
+    await setDoc(doc(db, 'companies', company.id), cleanUndefined(company));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, `companies/${company.id}`);
+  }
+}
+
+export async function updateCompanyStatus(
+  companyId: string,
+  status: 'pending' | 'active' | 'suspended' | 'rejected',
+  rejectionReason?: string
+): Promise<void> {
+  try {
+    const compRef = doc(db, 'companies', companyId);
+    const updatePayload: Record<string, any> = { status };
+    if (rejectionReason !== undefined) {
+      updatePayload.rejectionReason = rejectionReason;
+    }
+    await updateDoc(compRef, updatePayload);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `companies/${companyId}`);
+  }
+}
+
+export async function setCompanyAdminUserStatus(
+  companyId: string,
+  adminUid: string,
+  status: 'active' | 'inactive' | 'pending'
+): Promise<void> {
+  try {
+    // 1. Update global routing directory record
+    const globalUserRef = doc(db, 'rbacUsers', adminUid);
+    const globalSnap = await getDoc(globalUserRef);
+    if (globalSnap.exists()) {
+      await updateDoc(globalUserRef, { status });
+    }
+
+    // 2. Update company-scoped user record
+    const companyUserRef = doc(db, 'companies', companyId, 'rbacUsers', adminUid);
+    const compUserSnap = await getDoc(companyUserRef);
+    if (compUserSnap.exists()) {
+      await updateDoc(companyUserRef, { status });
+    }
+  } catch (error) {
+    console.warn(`Could not update user status for ${adminUid}:`, error);
+  }
+}
+
 /**
- * --- GENERIC CRUD UTILITY FUNCTIONS ---
+ * Helper to securely seed an individual collection only if it is currently empty
  */
+async function seedIfEmpty<T extends { id: string }>(collName: string, defaults: T[], companyId: string = DEFAULT_COMPANY_ID): Promise<void> {
+  const targetColRef = collection(db, 'companies', companyId, collName);
+  const qSnapshot = await getDocs(targetColRef);
+  if (qSnapshot.empty && defaults.length > 0) {
+    for (const item of defaults) {
+      await setDoc(doc(db, 'companies', companyId, collName, item.id), cleanUndefined({ ...item, companyId }));
+    }
+  }
+}
 
-const isLocal = () => typeof window !== 'undefined' && localStorage.getItem('sahaba_session_type') === 'local';
+/**
+ * Sync / Seed database helper. Initializes default company metadata if not present.
+ */
+export async function seedDatabase(): Promise<boolean> {
+  try {
+    // 1. Ensure default company doc exists
+    const compRef = doc(db, 'companies', DEFAULT_COMPANY_ID);
+    const compSnap = await getDoc(compRef);
+    if (!compSnap.exists()) {
+      await setDoc(compRef, {
+        id: DEFAULT_COMPANY_ID,
+        name: 'شركة سحابة الأعمال المحدودة',
+        crNumber: '1010889922',
+        adminEmail: SUPER_ADMIN_EMAIL,
+        adminUid: 'user_admin',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        status: 'active',
+        phone: '0112345678',
+        address: 'الرياض، المملكة العربية السعودية'
+      });
+    }
 
-function getLocalDefaultsForCollection(collName: string): any[] {
+    const initDocRef = doc(db, 'system_meta', 'seed_status_v5');
+    const initSnap = await getDoc(initDocRef);
+    if (initSnap.exists() && initSnap.data()?.seeded === true) {
+      return true;
+    }
+
+    // Initialize required roles, permissions, and deductionTypes for default company
+    await seedIfEmpty('deductionTypes', getLocalDefaultsForCollection('deductionTypes'), DEFAULT_COMPANY_ID);
+    await seedIfEmpty('rbacRoles', getLocalDefaultsForCollection('rbacRoles'), DEFAULT_COMPANY_ID);
+    await seedIfEmpty('rbacPermissions', getLocalDefaultsForCollection('rbacPermissions'), DEFAULT_COMPANY_ID);
+
+    await setDoc(initDocRef, { seeded: true, timestamp: new Date().toISOString() });
+    return true;
+  } catch (error) {
+    console.warn('Notice in database seeding: ', error);
+    return false;
+  }
+}
+
+export function getLocalDefaultsForCollection(collName: string): any[] {
   switch (collName) {
-    case 'employees':
-      return [
-        {
-          id: 'emp_1',
-          name: 'عبدالله محمد الشمري',
-          role: 'مطور برمجيات أول',
-          dept: 'تقنية المعلومات',
-          status: 'نشط',
-          hire: '2024-01-15',
-          salary: 12000,
-          leaveBalance: 30,
-          mobile: '0501234567',
-          email: 'abdullah@sahaba.local'
-        },
-        {
-          id: 'emp_2',
-          name: 'سارة أحمد الحربي',
-          role: 'أخصائي موارد بشرية',
-          dept: 'الموارد البشرية',
-          status: 'نشط',
-          hire: '2023-06-10',
-          salary: 9500,
-          leaveBalance: 22,
-          mobile: '0512345678',
-          email: 'sara@sahaba.local'
-        }
-      ];
-    case 'leaves':
-      return [
-        {
-          id: 'leave_1',
-          empId: 'emp_1',
-          type: 'سنوية',
-          days: 5,
-          from: '2026-08-01',
-          to: '2026-08-05',
-          status: 'موافق عليها',
-          reason: 'إجازة عائلية سنوية'
-        },
-        {
-          id: 'leave_2',
-          empId: 'emp_2',
-          type: 'مرضية',
-          days: 2,
-          from: '2026-05-12',
-          to: '2026-05-13',
-          status: 'بانتظار الموافقة',
-          reason: 'وعكة صحية طارئة'
-        }
-      ];
-    case 'attendance':
-      const todayStr = new Date().toISOString().slice(0, 10);
-      return [
-        {
-          id: 'att_1',
-          empId: 'emp_1',
-          date: todayStr,
-          checkIn: '08:00',
-          checkOut: '17:00',
-          status: 'حاضر',
-          notes: 'حضور مبكر من المكتب الرئيس'
-        },
-        {
-          id: 'att_2',
-          empId: 'emp_2',
-          date: todayStr,
-          checkIn: '08:15',
-          checkOut: '16:45',
-          status: 'حاضر',
-          notes: '—'
-        }
-      ];
-    case 'contracts':
-      return [
-        {
-          id: 'cont_emp_1',
-          empId: 'emp_1',
-          type: 'دوام كامل',
-          start: '2024-01-15',
-          end: '2027-01-14',
-          renewed: 'لا',
-          nextRenew: '2027-01-14',
-          iqamaExp: '1448-05-15',
-          workPermitExp: '1448-05-15',
-          status: 'نشط',
-          file: 'عقد_عبدالله.pdf'
-        },
-        {
-          id: 'cont_emp_2',
-          empId: 'emp_2',
-          type: 'دوام كامل',
-          start: '2023-06-10',
-          end: '2026-06-09',
-          renewed: 'نعم',
-          nextRenew: '2027-06-09',
-          iqamaExp: '1448-01-10',
-          workPermitExp: '1448-01-10',
-          status: 'نشط',
-          file: 'عقد_سارة.pdf'
-        }
-      ];
-    case 'professions':
-      return [
-        {
-          id: 'prof_emp_1',
-          empId: 'emp_1',
-          specialty: 'هندسة البرمجيات والتطوير',
-          cert: 'بكالوريوس',
-          uni: 'جامعة الملك سعود',
-          grad: '2023',
-          licenseNo: 'ENG-98765',
-          skills: 'React, Node.js, Firebase, Cloud Security, TypeScript'
-        },
-        {
-          id: 'prof_emp_2',
-          empId: 'emp_2',
-          specialty: 'إدارة الموارد البشرية والكوادر',
-          cert: 'بكالوريوس',
-          uni: 'جامعة الملك عبدالعزيز',
-          grad: '2022',
-          licenseNo: 'HR-54321',
-          skills: 'Personnel Management, Talent Acquisition, Labor Law, GOSI Portal'
-        }
-      ];
-    case 'deductions':
-      return [
-        {
-          id: 'ded_emp_1',
-          empId: 'emp_1',
-          gosiPct: 9.75,
-          medPct: 1.5,
-          taxPct: 0,
-          otherPct: 0,
-          otherNote: ''
-        },
-        {
-          id: 'ded_emp_2',
-          empId: 'emp_2',
-          gosiPct: 9.75,
-          medPct: 1.5,
-          taxPct: 0,
-          otherPct: 0,
-          otherNote: ''
-        }
-      ];
     case 'deductionTypes':
       return [
         {
           id: 'dtype_1',
-          name: 'تأمين المؤسسة العامة للتأمينات الاجتماعية (GOSI)',
-          code: 'GOSI',
-          percentage: 9.75,
-          status: 'نشط'
-        }
-      ];
-    case 'jobs':
-      return [
+          name: 'المؤسسة العامة للتأمينات الاجتماعية (GOSI)',
+          category: 'حكومي إلزامي',
+          defaultPct: 9.75,
+          applyTo: 'سعودي',
+          notes: 'حصة الموظف الشهرية وفق نظام التأمينات الاجتماعية السعودي'
+        },
         {
-          id: 'job_1',
-          title: 'محلل بيانات أول',
-          dept: 'تقنية المعلومات',
-          type: 'دوام كامل',
-          salary: '11,000 - 14,000',
-          status: 'مفتوح',
-          description: 'مطلوب محلل بيانات ذو خبرة لا تقل عن سنتين في لغات Python, SQL وبناء لوحات التحكم التفاعلية لخدمة صناع القرار.'
-        }
-      ];
-    case 'candidates':
-      return [
+          id: 'dtype_2',
+          name: 'صندوق تنمية الموارد البشرية (هدف)',
+          category: 'دعم وتمكين',
+          defaultPct: 0,
+          applyTo: 'الكل',
+          notes: 'برامج دعم الأجور المعتمدة'
+        },
         {
-          id: 'cand_1',
-          jobId: 'job_1',
-          name: 'خالد فهد السبيعي',
-          email: 'khaled@example.local',
-          mobile: '0555555555',
-          status: 'المقابلة الشخصية',
-          score: 85,
-          notes: 'مهارات تواصل رائعة وخبرة عملية جيدة جداً في Power BI.'
-        }
-      ];
-    case 'reviews':
-      return [
+          id: 'dtype_3',
+          name: 'التأمين الصحي التكافلي',
+          category: 'طبي واجتماعي',
+          defaultPct: 1.5,
+          applyTo: 'وافد',
+          notes: 'خصم التغطية الإضافية للتابعين'
+        },
         {
-          id: 'rev_1',
-          empId: 'emp_1',
-          reviewer: 'سارة أحمد الحربي',
-          period: 'الربع الأول 2026',
-          score: 4.8,
-          notes: 'أداء استثنائي وإنجاز لكافة المهام التقنية المسندة قبل موعدها المحدد.',
-          date: '2026-03-31'
-        }
-      ];
-    case 'trainings':
-      return [
-        {
-          id: 'train_1',
-          title: 'الأمن السيبراني وحماية البيانات الحساسة',
-          provider: 'الأكاديمية الوطنية لتقنية المعلومات',
-          duration: '15 ساعة',
-          start: '2026-06-01',
-          end: '2026-06-05',
-          status: 'قادم',
-          cost: 1500
-        }
-      ];
-    case 'expenses':
-      return [
-        {
-          id: 'exp_1',
-          empId: 'emp_1',
-          amount: 450,
-          category: 'مشتريات مكتبية',
-          notes: 'شراء ملحقات تقنية لوحة مفاتيح وفأرة لاسلكية',
-          date: '2026-05-10',
-          status: 'بانتظار الموافقة'
-        }
-      ];
-    case 'trips':
-      return [
-        {
-          id: 'trip_1',
-          empId: 'emp_1',
-          destination: 'جدة - فرع الشركة الغربي',
-          start: '2026-05-15',
-          end: '2026-05-18',
-          reason: 'تقديم الدعم الفني وتحديث شبكة الاتصالات والربط السحابي بالفرع',
-          allowance: 1200,
-          status: 'موافق عليها'
-        }
-      ];
-    case 'health':
-      return [
-        {
-          id: 'health_1',
-          empId: 'emp_1',
-          provider: 'بوبا العربية',
-          class: 'A',
-          cardNo: 'BU-98765432',
-          start: '2026-01-01',
-          end: '2026-12-31',
-          premium: 6800,
-          dependents: 0,
-          status: 'نشط'
-        }
-      ];
-    case 'docs':
-      return [
-        {
-          id: 'doc_1',
-          title: 'لائحة العمل والعمال والسياسات الداخلية',
-          category: 'السياسات العامة',
-          addedBy: 'سارة أحمد الحربي',
-          date: '2025-12-01',
-          size: '2.4 MB',
-          file: 'لائحة_سحابة_الأعمال.pdf'
-        }
-      ];
-    case 'tasks':
-      return [
-        {
-          id: 'task_1',
-          title: 'تحديث وثائق الحماية والتشفير بقاعدة البيانات',
-          assignee: 'emp_1',
-          dept: 'تقنية المعلومات',
-          priority: 'high',
-          status: 'todo',
-          due: '2026-07-20',
-          progress: 0,
-          tags: ['الأمان_السيبراني', 'قواعد_البيانات'],
-          desc: 'تنفيذ وتطبيق معايير الأمن والمجلد السحابي الآمن.'
-        }
-      ];
-    case 'assets':
-      return [
-        {
-          id: 'asset_1',
-          empId: 'emp_1',
-          name: 'جهاز حاسب محمول MacBook Pro 16',
-          serial: 'C02F8XYZQ05D',
-          category: 'أجهزة إلكترونية',
-          assignedDate: '2024-01-15',
-          status: 'Assigned',
-          assignedBy: 'مدير النظام',
-          notes: 'بحالة ممتازة وبكامل ملحقاته الشاحن والعلبة الأصلية'
-        }
-      ];
-    case 'assetHistory':
-      return [
-        {
-          id: 'hist_1',
-          assetId: 'asset_1',
-          empId: 'emp_1',
-          empName: 'عبدالله محمد الشمري',
-          action: 'assign',
-          newStatus: 'Assigned',
-          changedBy: 'مدير النظام',
-          timestamp: '2024-01-15T09:00:00Z',
-          notes: 'تم تسليم العهدة رسمياً وتوقيع نموذج الاستلام'
-        }
-      ];
-    case 'rbacUsers':
-      return [
-        {
-          id: 'user_admin',
-          fullName: 'محمود فهمي (المدير العام)',
-          username: 'mahmoudfahmyaly695@gmail.com',
-          empCode: 'EMP-0001',
-          roleId: 'role_admin',
-          status: 'active'
+          id: 'dtype_4',
+          name: 'سلف وعهد شخصية',
+          category: 'داخلي',
+          defaultPct: 0,
+          applyTo: 'الكل',
+          notes: 'تسوية شهرية وفق سياسة الشركة'
         }
       ];
     case 'rbacRoles':
       return [
         {
           id: 'role_admin',
-          name: 'مدير النظام (Admin)',
-          description: 'يمتلك كامل الصلاحيات الإدارية والفنية لتشغيل النظام وإدارة الحماية والربط السحابي.',
+          name: 'مدير النظام (Super Admin)',
+          description: 'صلاحيات مطلقة لإدارة المنشأة، الموظفين، الرواتب، الإعدادات والأمان.',
           permissionIds: [
             'view_dashboard', 'view_ess', 'view_employees', 'view_attendance', 'view_leaves',
             'view_payroll', 'view_compliance', 'view_recruit', 'view_perf', 'view_training',
             'view_expenses', 'view_trips', 'view_empfiles', 'view_docs', 'view_deductions',
             'view_tasks', 'view_assets', 'view_rbac', 'view_health', 'view_reports',
             'create_employee', 'edit_employee', 'delete_employee', 'create_leave', 'decide_leave',
-            'record_attendance', 'delete_attendance', 'approve_operations', 'create_asset',
-            'edit_asset', 'return_asset', 'manage_asset_history'
+            'record_attendance', 'delete_attendance', 'approve_operations', 'create_asset', 'edit_asset',
+            'return_asset', 'manage_asset_history'
+          ]
+        },
+        {
+          id: 'role_hr',
+          name: 'مسؤول الموارد البشرية (HR Manager)',
+          description: 'إدارة شؤون الموظفين، الحضور والانصراف، الإجازات، ملفات العقود والتأمين الطبي.',
+          permissionIds: [
+            'view_dashboard', 'view_ess', 'view_employees', 'view_attendance', 'view_leaves',
+            'view_compliance', 'view_recruit', 'view_perf', 'view_training', 'view_empfiles',
+            'view_docs', 'view_deductions', 'view_tasks', 'view_assets', 'view_health', 'view_reports',
+            'create_employee', 'edit_employee', 'create_leave', 'decide_leave', 'record_attendance',
+            'create_asset', 'edit_asset', 'return_asset', 'manage_asset_history'
+          ]
+        },
+        {
+          id: 'role_finance',
+          name: 'المدير المالي (Finance Officer)',
+          description: 'متابعة مسير الرواتب الموحد، التحويلات، النفقات، العهد والخصومات التأمينية.',
+          permissionIds: [
+            'view_dashboard', 'view_ess', 'view_payroll', 'view_compliance', 'view_expenses',
+            'view_deductions', 'view_reports', 'approve_operations'
           ]
         },
         {
@@ -536,105 +513,124 @@ function getLocalDefaultsForCollection(collName: string): any[] {
   }
 }
 
-export async function getCollectionData<T>(collName: string): Promise<T[]> {
-  if (isLocal()) {
-    const key = `sahaba_db_${collName}`;
-    const raw = localStorage.getItem(key);
-    if (!raw) {
-      const defaults = getLocalDefaultsForCollection(collName);
-      localStorage.setItem(key, JSON.stringify(defaults));
-      return defaults as unknown as T[];
-    }
-    return JSON.parse(raw) as T[];
-  }
+/**
+ * --- GENERIC CRUD UTILITY FUNCTIONS ---
+ */
+
+export async function getCollectionData<T>(collName: string, companyId?: string): Promise<T[]> {
+  const targetCompId = companyId || getActiveCompanyId();
   try {
-    const qSnapshot = await getDocs(collection(db, collName));
+    const targetRef = resolveCollectionRef(collName, targetCompId);
+    const qSnapshot = await getDocs(targetRef);
     return qSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as unknown as T));
   } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, collName);
+    handleFirestoreError(error, OperationType.LIST, `companies/${targetCompId}/${collName}`);
   }
 }
 
-export async function createDocument<T extends { id?: string }>(collName: string, id: string, data: T): Promise<void> {
-  const path = `${collName}/${id}`;
-  if (isLocal()) {
-    const key = `sahaba_db_${collName}`;
-    const raw = localStorage.getItem(key);
-    const list = raw ? JSON.parse(raw) : [];
-    const index = list.findIndex((x: any) => x.id === id);
-    const cleaned = cleanUndefined({ ...data, id });
-    if (index >= 0) {
-      list[index] = cleaned;
-    } else {
-      list.push(cleaned);
-    }
-    localStorage.setItem(key, JSON.stringify(list));
-    return;
-  }
+export async function createDocument<T extends object>(
+  collName: string,
+  id: string,
+  data: T,
+  companyId?: string
+): Promise<void> {
+  const explicitCompId = (data as any)?.companyId;
+  const targetCompId = companyId || explicitCompId || getActiveCompanyId();
+  const path = collName === 'companies'
+    ? `companies/${id}`
+    : (collName === 'system_meta'
+      ? `system_meta/${id}`
+      : (collName === 'global_rbacUsers'
+        ? `rbacUsers/${id}`
+        : `companies/${targetCompId}/${collName}/${id}`));
+
   try {
-    await setDoc(doc(db, collName, id), cleanUndefined({ ...data, id }));
+    const docRef = resolveDocRef(collName, id, targetCompId);
+    const cleanedData = cleanUndefined({
+      ...data,
+      id,
+      ...(collName !== 'companies' && collName !== 'system_meta'
+        ? { companyId: explicitCompId || targetCompId }
+        : {})
+    });
+    await setDoc(docRef, cleanedData);
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
   }
 }
 
-export async function createDocumentWithoutId<T>(collName: string, data: T): Promise<string> {
-  if (isLocal()) {
-    const randomId = 'local_' + Math.floor(Math.random() * 1000000000);
-    const key = `sahaba_db_${collName}`;
-    const raw = localStorage.getItem(key);
-    const list = raw ? JSON.parse(raw) : [];
-    const cleaned = cleanUndefined({ ...data, id: randomId });
-    list.push(cleaned);
-    localStorage.setItem(key, JSON.stringify(list));
-    return randomId;
-  }
-  const randomId = doc(collection(db, collName)).id;
-  const path = `${collName}/${randomId}`;
+export async function createDocumentWithoutId<T extends object>(
+  collName: string,
+  data: T,
+  companyId?: string
+): Promise<string> {
+  const explicitCompId = (data as any)?.companyId;
+  const targetCompId = companyId || explicitCompId || getActiveCompanyId();
+  const targetCollRef = resolveCollectionRef(collName, targetCompId);
+  const randomId = doc(targetCollRef).id;
+  const path = collName === 'companies'
+    ? `companies/${randomId}`
+    : (collName === 'system_meta'
+      ? `system_meta/${randomId}`
+      : (collName === 'global_rbacUsers'
+        ? `rbacUsers/${randomId}`
+        : `companies/${targetCompId}/${collName}/${randomId}`));
+
   try {
-    await setDoc(doc(db, collName, randomId), cleanUndefined({ ...data, id: randomId }));
+    const targetDocRef = resolveDocRef(collName, randomId, targetCompId);
+    await setDoc(targetDocRef, cleanUndefined({
+      ...data,
+      id: randomId,
+      ...(collName !== 'companies' && collName !== 'system_meta'
+        ? { companyId: explicitCompId || targetCompId }
+        : {})
+    }));
     return randomId;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
   }
 }
 
-export async function updateDocument<T>(collName: string, id: string, data: Partial<T>): Promise<void> {
-  const path = `${collName}/${id}`;
-  if (isLocal()) {
-    const key = `sahaba_db_${collName}`;
-    const raw = localStorage.getItem(key);
-    if (raw) {
-      const list = JSON.parse(raw);
-      const index = list.findIndex((x: any) => x.id === id);
-      if (index >= 0) {
-        list[index] = cleanUndefined({ ...list[index], ...data });
-        localStorage.setItem(key, JSON.stringify(list));
-      }
-    }
-    return;
-  }
+export async function updateDocument<T>(
+  collName: string,
+  id: string,
+  data: Partial<T>,
+  companyId?: string
+): Promise<void> {
+  const targetCompId = companyId || getActiveCompanyId();
+  const path = collName === 'companies'
+    ? `companies/${id}`
+    : (collName === 'system_meta'
+      ? `system_meta/${id}`
+      : (collName === 'global_rbacUsers'
+        ? `rbacUsers/${id}`
+        : `companies/${targetCompId}/${collName}/${id}`));
+
   try {
-    await updateDoc(doc(db, collName, id), cleanUndefined(data) as any);
+    const docRef = resolveDocRef(collName, id, targetCompId);
+    await updateDoc(docRef, cleanUndefined(data) as any);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
 }
 
-export async function deleteDocument(collName: string, id: string): Promise<void> {
-  const path = `${collName}/${id}`;
-  if (isLocal()) {
-    const key = `sahaba_db_${collName}`;
-    const raw = localStorage.getItem(key);
-    if (raw) {
-      const list = JSON.parse(raw);
-      const filtered = list.filter((x: any) => x.id !== id);
-      localStorage.setItem(key, JSON.stringify(filtered));
-    }
-    return;
-  }
+export async function deleteDocument(
+  collName: string,
+  id: string,
+  companyId?: string
+): Promise<void> {
+  const targetCompId = companyId || getActiveCompanyId();
+  const path = collName === 'companies'
+    ? `companies/${id}`
+    : (collName === 'system_meta'
+      ? `system_meta/${id}`
+      : (collName === 'global_rbacUsers'
+        ? `rbacUsers/${id}`
+        : `companies/${targetCompId}/${collName}/${id}`));
+
   try {
-    await deleteDoc(doc(db, collName, id));
+    const docRef = resolveDocRef(collName, id, targetCompId);
+    await deleteDoc(docRef);
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
