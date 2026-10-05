@@ -56,6 +56,7 @@ export const Employees: React.FC = () => {
   const [fCurrency, setFCurrency] = useState<string>(DEFAULT_CURRENCY);
   const [fWorkType, setFWorkType] = useState<string>(DEFAULT_WORK_TYPE);
   const [fContractType, setFContractType] = useState<string>(DEFAULT_CONTRACT_TYPE);
+  const [fNationality, setFNationality] = useState<'' | 'saudi' | 'expat'>('');
 
   // Search/Filter state
   const [searchTerm, setSearchTerm] = useState('');
@@ -96,6 +97,9 @@ export const Employees: React.FC = () => {
       setFCurrency(emp.currency || DEFAULT_CURRENCY);
       setFWorkType(emp.workType || DEFAULT_WORK_TYPE);
       setFContractType(emp.contractType || DEFAULT_CONTRACT_TYPE);
+      // Same rule as the registry badge, so the form opens on what the list shows
+      const empContract = contracts?.find(c => c.empId === emp.id);
+      setFNationality(isSaudiEmployee(emp, empContract) ? 'saudi' : 'expat');
     } else {
       setEditingEmployee(null);
       setFName('');
@@ -108,13 +112,14 @@ export const Employees: React.FC = () => {
       setFCurrency(DEFAULT_CURRENCY);
       setFWorkType(DEFAULT_WORK_TYPE);
       setFContractType(DEFAULT_CONTRACT_TYPE);
+      setFNationality('');
     }
     setShowModal(true);
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fName.trim() || !fJob.trim() || !fSalary) {
+    if (!fName.trim() || !fJob.trim() || !fNationality || !fSalary) {
       alert('الرجاء تعبئة كافة الحقول المطلوبة بشكل صحيح.');
       return;
     }
@@ -132,6 +137,7 @@ export const Employees: React.FC = () => {
         currency: fCurrency,
         workType: fWorkType,
         contractType: fContractType,
+        isSaudi: fNationality === 'saudi',
         hire: editingEmployee ? editingEmployee.hire : new Date().toISOString().slice(0, 10),
         leaveBalance: editingEmployee ? editingEmployee.leaveBalance : 21,
         perf: editingEmployee ? editingEmployee.perf : 4.0
@@ -593,6 +599,20 @@ export const Employees: React.FC = () => {
                   value={fJob}
                   onChange={(e) => setFJob(e.target.value)}
                 />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-slate-400">الجنسية *</label>
+                <select
+                  required
+                  className="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-gold bg-slate-50"
+                  value={fNationality}
+                  onChange={(e) => setFNationality(e.target.value as '' | 'saudi' | 'expat')}
+                >
+                  <option value="">-- اختر الجنسية --</option>
+                  <option value="saudi">سعودي (Saudi)</option>
+                  <option value="expat">وافد مقيم (Expat Resident)</option>
+                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
