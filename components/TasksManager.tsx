@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useHR } from '../context/HRContext';
 import { Employee, Task } from '../types';
 import { exportToCSV } from '../utils/exportUtils';
@@ -47,7 +47,9 @@ export const TasksManager: React.FC = () => {
     updateTask,
     deleteTask,
     setCurrentView,
-    setSelectedEmployeeId
+    setSelectedEmployeeId,
+    selectedTaskId,
+    setSelectedTaskId
   } = useHR();
 
   // Search & Filters State
@@ -61,6 +63,7 @@ export const TasksManager: React.FC = () => {
   // Form states for adding new task
   const [newTitle, setNewTitle] = useState('');
   const [newAssigned, setNewAssigned] = useState('');
+  const [newDept, setNewDept] = useState('');
   const [newPriority, setNewPriority] = useState<'high' | 'med' | 'low'>('med');
   const [newDesc, setNewDesc] = useState('');
   const [newDue, setNewDue] = useState(() => {
@@ -72,6 +75,16 @@ export const TasksManager: React.FC = () => {
   const [newServiceType, setNewServiceType] = useState<'internal' | 'external'>('internal');
   const [newServiceName, setNewServiceName] = useState('');
   const [tagInput, setTagInput] = useState('');
+
+  // Department list for assignment
+  const availableDepts = useMemo(() => {
+    const list = Array.from(new Set(employees.map(e => e.dept).filter(Boolean)));
+    const defaultDepts = ['الموارد البشرية', 'تقنية المعلومات', 'المالية', 'المبيعات', 'التسويق', 'العمليات والتشغيل', 'الإدارة العامة', 'الهندسة'];
+    for (const d of defaultDepts) {
+      if (!list.includes(d)) list.push(d);
+    }
+    return list;
+  }, [employees]);
 
   // Editing state
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -110,6 +123,10 @@ export const TasksManager: React.FC = () => {
   // Auto pre-fill department based on assigned employee selection
   const handleAssigneeChange = (empId: string) => {
     setNewAssigned(empId);
+    const emp = employees.find(e => e.id === empId);
+    if (emp && emp.dept) {
+      setNewDept(emp.dept);
+    }
   };
 
   // Fast operational compliance templates for typical Saudi HR tasks
@@ -118,6 +135,9 @@ export const TasksManager: React.FC = () => {
     const fallbackEmp = employees[0]?.id || '';
     const assigneeId = newAssigned || fallbackEmp;
     const emp = employees.find(e => e.id === assigneeId);
+    if (emp && emp.dept) {
+      setNewDept(emp.dept);
+    }
 
     // Automatically open the form modal
     setIsAddTaskOpen(true);
@@ -183,7 +203,7 @@ export const TasksManager: React.FC = () => {
       await addTask({
         title: newTitle.trim(),
         assignee: emp.id,
-        dept: emp.dept,
+        dept: (newDept || emp.dept || '').trim(),
         priority: newPriority,
         status: 'todo',
         due: newDue,
@@ -196,6 +216,8 @@ export const TasksManager: React.FC = () => {
 
       // Clear Form
       setNewTitle('');
+      setNewAssigned('');
+      setNewDept('');
       setNewDesc('');
       setTagInput('');
       setNewServiceName('');
@@ -277,6 +299,17 @@ export const TasksManager: React.FC = () => {
     setEditServiceName(task.serviceType === 'external' ? task.serviceName : '');
     setEditTagsString(task.tags.join(', '));
   };
+
+  // Automatically open task if selected from notifications (Requirement 5)
+  useEffect(() => {
+    if (selectedTaskId && tasks.length > 0) {
+      const target = tasks.find(t => t.id === selectedTaskId);
+      if (target) {
+        openEditModal(target);
+      }
+      setSelectedTaskId(null);
+    }
+  }, [selectedTaskId, tasks]);
 
   // Save Edit Dialog
   const handleSaveTaskEdit = async (e: React.FormEvent) => {

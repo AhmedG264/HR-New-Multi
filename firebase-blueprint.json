@@ -349,6 +349,24 @@
         "notes": { "type": "string" }
       },
       "required": ["id", "assetId", "empId", "action", "newStatus", "changedBy", "timestamp"]
+    },
+    "InAppNotification": {
+      "title": "InAppNotification",
+      "description": "Company-scoped in-app notifications for task assignments and team alerts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "recipientUid": { "type": "string" },
+        "companyId": { "type": "string" },
+        "type": { "type": "string", "enum": ["task"] },
+        "taskId": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "isRead": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "recipientUid", "companyId", "type", "title", "message", "isRead", "createdAt"]
     }
   },
   "firestore": {
@@ -439,6 +457,10 @@
     "companies": {
       "schema": "Company",
       "description": "Organizational tenant accounts and their isolated subcollections"
+    },
+    "notifications": {
+      "schema": "InAppNotification",
+      "description": "Collection of company-scoped in-app notifications"
     }
   }
 }

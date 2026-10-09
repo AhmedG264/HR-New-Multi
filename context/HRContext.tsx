@@ -3,11 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { createContext, useContext, useState, useRef } from 'react';
+import React, { createContext, useContext, useState, useRef, useEffect, useMemo } from 'react';
 import { HRContextProps, SeedStatus } from './HRContext.types';
 import { useHREntityData } from './useHREntityData';
 import { useHRAuth } from './useHRAuth';
 import { useHRMutators } from './useHRMutators';
+import { InAppNotification } from '../types';
+import { query, where, onSnapshot, updateDoc } from 'firebase/firestore';
+import { resolveCollectionRef, resolveDocRef } from '../services/db';
 
 const HRContext = createContext<HRContextProps | undefined>(undefined);
 
@@ -53,8 +56,85 @@ export const HRProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     employees: data.employees,
     leaves: data.leaves,
     attendance: data.attendance,
-    assets: data.assets
+    assets: data.assets,
+    rbacUsers: auth.rbacUsers
   });
+
+  // Selected task state for direct task opening (Requirement 5)
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+
+  // Real-time notifications for currently authenticated user (Requirement 3 & 8 & 9)
+  const [notifications, setNotifications] = useState<InAppNotification[]>([]);
+
+  useEffect(() => {
+    // If not authenticated or no company, clear notifications and do not attach listener
+    if (!auth.currentUser || !auth.firebaseAuthReady) {
+      setNotifications([]);
+      return;
+    }
+
+    const compId = auth.currentCompanyId;
+    const uid = auth.currentUser.id;
+
+    if (!compId || !uid) {
+      setNotifications([]);
+      return;
+    }
+
+    const notifCollRef = resolveCollectionRef('notifications', compId);
+    // Query only notifications for the current user in the current company
+    const q = query(
+      notifCollRef,
+      where('recipientUid', '==', uid)
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const loaded: InAppNotification[] = [];
+        snapshot.forEach((docSnap) => {
+          loaded.push({ id: docSnap.id, ...docSnap.data() } as InAppNotification);
+        });
+        // Sort newest first client-side and take up to 50 items (Requirement 8)
+        loaded.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        setNotifications(loaded.slice(0, 50));
+      },
+      (error) => {
+        console.warn(`[NOTIFICATIONS] Listener note for company ${compId}:`, error);
+      }
+    );
+
+    // Unsubscribe when user logs out or switches companies (Requirement 8 & 9)
+    return () => {
+      unsubscribe();
+    };
+  }, [auth.currentUser?.id, auth.currentCompanyId, auth.firebaseAuthReady]);
+
+  const unreadNotificationsCount = useMemo(() => {
+    return notifications.filter((n) => !n.isRead).length;
+  }, [notifications]);
+
+  const markNotificationAsRead = async (id: string) => {
+    if (!auth.currentCompanyId) return;
+    try {
+      const docRef = resolveDocRef('notifications', id, auth.currentCompanyId);
+      await updateDoc(docRef, { isRead: true });
+    } catch (err) {
+      console.warn('[NOTIFICATIONS] Error marking as read:', err);
+    }
+  };
+
+  const markAllNotificationsAsRead = async () => {
+    if (!auth.currentCompanyId) return;
+    try {
+      const unread = notifications.filter((n) => !n.isRead);
+      await Promise.all(
+        unread.map((n) => updateDoc(resolveDocRef('notifications', n.id, auth.currentCompanyId), { isRead: true }))
+      );
+    } catch (err) {
+      console.warn('[NOTIFICATIONS] Error marking all as read:', err);
+    }
+  };
 
   return (
     <HRContext.Provider
@@ -85,6 +165,14 @@ export const HRProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         setSelectedEmployeeId,
         employeeFileTab,
         setEmployeeFileTab,
+
+        // Task & Notifications (Phase 1)
+        selectedTaskId,
+        setSelectedTaskId,
+        notifications,
+        unreadNotificationsCount,
+        markNotificationAsRead,
+        markAllNotificationsAsRead,
 
         addEmployee: mutators.addEmployee,
         updateEmployee: mutators.updateEmployee,

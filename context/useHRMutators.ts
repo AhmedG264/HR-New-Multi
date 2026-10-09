@@ -45,6 +45,7 @@ interface UseHRMutatorsArgs {
   leaves: Leave[];
   attendance: Attendance[];
   assets: EmployeeAsset[];
+  rbacUsers: RBACUser[];
 }
 
 /**
@@ -60,7 +61,8 @@ export function useHRMutators({
   employees,
   leaves,
   attendance,
-  assets
+  assets,
+  rbacUsers
 }: UseHRMutatorsArgs) {
   // 1. Employees
   const addEmployee = async (emp: Omit<Employee, 'id'>) => {
@@ -397,8 +399,54 @@ export function useHRMutators({
 
   // 13. Kanban Collaborative Tasks
   const addTask = async (task: Omit<Task, 'id'>) => {
-    await createDocumentWithoutId('tasks', task);
+    // 1. Create the task document first (Requirement 2 & 10)
+    const createdTaskId = await createDocumentWithoutId('tasks', task);
     await loadAllData();
+
+    // 2. Dispatch notifications if assigned to a department
+    if (task.dept && task.dept.trim() !== '') {
+      try {
+        const targetDept = task.dept.trim();
+        // Identify all active employees belonging to that department
+        const activeDeptEmployees = employees.filter(
+          e => e.dept === targetDept && e.status === 'نشط'
+        );
+
+        if (activeDeptEmployees.length > 0) {
+          const targetCompId = getActiveCompanyId();
+          const notifiedUids = new Set<string>();
+
+          for (const emp of activeDeptEmployees) {
+            // Identify active RBACUser linked to this employee
+            const matchedUser = rbacUsers.find(
+              u => u.status === 'active' && (u.employeeId === emp.id || u.empCode === emp.id || u.id === emp.id)
+            );
+            const recipientUid = matchedUser?.id || emp.id;
+
+            if (recipientUid && !notifiedUids.has(recipientUid)) {
+              notifiedUids.add(recipientUid);
+
+              const notifData = {
+                recipientUid,
+                companyId: targetCompId,
+                type: 'task' as const,
+                taskId: createdTaskId,
+                departmentId: targetDept,
+                title: 'مهمة جديدة',
+                message: `تم إسناد مهمة جديدة إلى قسمك: ${task.title}`,
+                isRead: false,
+                createdAt: new Date().toISOString()
+              };
+
+              await createDocumentWithoutId('notifications', notifData, targetCompId);
+            }
+          }
+        }
+      } catch (notifErr) {
+        // Notification failure must NOT cause task creation to fail (Requirement 10)
+        console.warn('[TASK_NOTIFICATION] Failed to dispatch department task notifications:', notifErr);
+      }
+    }
   };
 
   const updateTask = async (id: string, task: Partial<Task>) => {

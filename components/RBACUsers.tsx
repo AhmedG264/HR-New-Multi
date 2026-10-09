@@ -43,6 +43,11 @@ export const RBACUsers: React.FC = () => {
   const [status, setStatus] = useState<'active' | 'inactive'>('active');
   const [employeeId, setEmployeeId] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+
+  // Delete Confirmation Modal states
+  const [userToDelete, setUserToDelete] = useState<RBACUser | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const canManage = hasPermission('view_rbac');
 
@@ -53,6 +58,11 @@ export const RBACUsers: React.FC = () => {
     .filter(Boolean);
 
   const availableEmployees = employees.filter(emp => !linkedEmployeeIds.includes(emp.id));
+
+  const closeModal = () => {
+    setPassword('');
+    setShowModal(false);
+  };
 
   const openCreateModal = () => {
     if (!canManage) return;
@@ -148,16 +158,54 @@ export const RBACUsers: React.FC = () => {
           employeeId: employeeId || null
         });
       }
+      setPassword('');
       setShowModal(false);
     } catch (err: any) {
       setErrorMsg(err.message || 'حدث خطأ في معالجة العملية');
     }
   };
 
-  const handleDelete = async (userId: string) => {
+  const initiateDelete = (user: RBACUser) => {
     if (!canManage) return;
-    if (window.confirm('هل أنت متأكد من رغبتك في حذف هذا المستخدم نهائياً؟')) {
+    // [RBAC DELETE] Diagnostic log
+    console.log('[RBAC DELETE] button clicked', user.id);
+    setErrorMsg('');
+    setSuccessMsg('');
+    setUserToDelete(user);
+  };
+
+  const cancelDelete = () => {
+    if (isDeleting) return;
+    setUserToDelete(null);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!userToDelete || isDeleting) return;
+    const userId = userToDelete.id;
+
+    // [RBAC DELETE] Diagnostic log
+    console.log('[RBAC DELETE] confirmation accepted', userId);
+
+    setIsDeleting(true);
+    setErrorMsg('');
+
+    try {
+      // [RBAC DELETE] Diagnostic log
+      console.log('[RBAC DELETE] calling deleteRBACUser', userId);
+
       await deleteRBACUser(userId);
+
+      // [RBAC DELETE] Diagnostic log
+      console.log('[RBAC DELETE] deleteRBACUser completed', userId);
+
+      setUserToDelete(null);
+      setSuccessMsg('تم حذف حساب المستخدم بنجاح');
+    } catch (err: any) {
+      // [RBAC DELETE] Diagnostic log
+      console.error('[RBAC DELETE] failed', err);
+      setErrorMsg(err.message || 'حدث خطأ أثناء محاولة حذف المستخدم');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -236,6 +284,25 @@ export const RBACUsers: React.FC = () => {
           </select>
         </div>
       </div>
+
+      {/* Error message banner */}
+      {errorMsg && !showModal && !userToDelete && (
+        <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl flex items-center justify-between gap-3 text-rose-800 text-sm">
+          <span>{errorMsg}</span>
+          <button onClick={() => setErrorMsg('')} className="text-rose-500 hover:text-rose-700 text-base font-bold">✕</button>
+        </div>
+      )}
+
+      {/* Success message banner */}
+      {successMsg && !showModal && !userToDelete && (
+        <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl flex items-center justify-between gap-3 text-emerald-800 text-sm">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+            <span>{successMsg}</span>
+          </div>
+          <button onClick={() => setSuccessMsg('')} className="text-emerald-500 hover:text-emerald-700 text-base font-bold">✕</button>
+        </div>
+      )}
 
       {/* Access Warning Card if not Admin/View permitted */}
       {!canManage && (
@@ -317,7 +384,7 @@ export const RBACUsers: React.FC = () => {
                       تعديل
                     </button>
                     <button
-                      onClick={() => handleDelete(user.id)}
+                      onClick={() => initiateDelete(user)}
                       className="p-1 px-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-[11px] font-medium rounded-lg flex items-center gap-1"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -348,7 +415,7 @@ export const RBACUsers: React.FC = () => {
                 {modalType === 'view' && 'عرض تفاصيل الحساب الاستباقي'}
               </h2>
               <button
-                onClick={() => setShowModal(false)}
+                onClick={closeModal}
                 className="text-slate-400 hover:text-slate-600 text-lg font-bold"
               >
                 ×
@@ -407,7 +474,7 @@ export const RBACUsers: React.FC = () => {
 
                 <div className="pt-4 flex justify-end">
                   <button
-                    onClick={() => setShowModal(false)}
+                    onClick={closeModal}
                     className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm px-4 py-2 rounded-xl transition"
                   >
                     إغلاق النافذة
@@ -521,7 +588,7 @@ export const RBACUsers: React.FC = () => {
                 <div className="pt-4 flex gap-3">
                   <button
                     type="button"
-                    onClick={() => setShowModal(false)}
+                    onClick={closeModal}
                     className="w-1/2 bg-slate-50 hover:bg-slate-100/80 text-slate-600 text-xs px-4 py-3 rounded-xl transition font-medium"
                   >
                     إلغاء الأمر
@@ -535,6 +602,69 @@ export const RBACUsers: React.FC = () => {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {userToDelete && (
+        <div id="rbac_delete_confirm_modal" className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-xl border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-rose-50/50">
+              <div className="flex items-center gap-2 text-rose-700 font-bold text-base">
+                <Trash2 className="w-5 h-5 text-rose-600" />
+                <h2>تأكيد حذف الحساب</h2>
+              </div>
+              <button
+                type="button"
+                onClick={cancelDelete}
+                disabled={isDeleting}
+                className="text-slate-400 hover:text-slate-600 text-lg font-bold disabled:opacity-50"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {errorMsg && (
+                <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl text-rose-800 text-xs">
+                  {errorMsg}
+                </div>
+              )}
+
+              <p className="text-sm font-semibold text-slate-800">
+                هل أنت متأكد من حذف حساب الدخول لهذا المستخدم؟
+              </p>
+
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs space-y-1">
+                <div className="font-semibold text-slate-700">{userToDelete.fullName}</div>
+                <div className="text-slate-500 font-mono text-[11px]">{userToDelete.username}</div>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 p-3.5 rounded-xl text-amber-800 text-xs flex items-start gap-2.5">
+                <Info className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                <span>سيتم إلغاء وصوله للنظام، ولن يتم حذف سجل الموظف.</span>
+              </div>
+
+              <div className="pt-2 flex gap-3">
+                <button
+                  type="button"
+                  onClick={cancelDelete}
+                  disabled={isDeleting}
+                  className="w-1/2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-4 py-3 rounded-xl transition font-medium disabled:opacity-50"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDelete}
+                  disabled={isDeleting}
+                  className="w-1/2 bg-rose-600 hover:bg-rose-700 text-white text-xs px-4 py-3 rounded-xl transition font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {isDeleting ? 'جاري الحذف...' : 'تأكيد الحذف'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -278,3 +278,16 @@ export interface AssetHistory {
   timestamp: string;
   notes?: string;
 }
+
+export interface InAppNotification {
+  id: string;
+  recipientUid: string;
+  companyId: string;
+  type: 'task';
+  taskId: string;
+  departmentId: string;
+  title: string;
+  message: string;
+  isRead: boolean;
+  createdAt: string;
+}

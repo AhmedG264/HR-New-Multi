@@ -24,12 +24,16 @@ import {
   resolveCollectionRef
 } from '../services/db';
 import { auth, db } from '../firebase';
+import firebaseConfig from '../firebase-applet-config.json';
+import { initializeApp, deleteApp } from 'firebase/app';
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
   signOut,
-  onAuthStateChanged
+  onAuthStateChanged,
+  getAuth,
+  deleteUser
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { SeedStatus } from './HRContext.types';
@@ -157,13 +161,14 @@ export function useHRAuth({ loadAllData, setSeedStatus, resetLoadedViews, goToDa
     }
   };
 
-  const safeLoadRbac = async <T,>(collName: string, setter: (data: T[]) => void) => {
+  const safeLoadRbac = async <T,>(collName: string, setter: (data: T[]) => void, companyId?: string) => {
     if (!auth.currentUser) {
       setter([]);
       return;
     }
+    const targetComp = companyId || currentCompanyId || getActiveCompanyId();
     try {
-      const data = await getCollectionData<T>(collName);
+      const data = await getCollectionData<T>(collName, targetComp);
       if (data && data.length > 0) {
         setter(data);
       } else {
@@ -180,12 +185,13 @@ export function useHRAuth({ loadAllData, setSeedStatus, resetLoadedViews, goToDa
    * 'rbac-roles' views. Invoked by the entity-data hook's loadViewData.
    */
   const loadRbacViewData = async (viewName: string) => {
+    const targetComp = currentCompanyId || getActiveCompanyId();
     if (viewName === 'rbac-users') {
-      await safeLoadRbac<RBACUser>('rbacUsers', setRbacUsers);
+      await safeLoadRbac<RBACUser>('rbacUsers', setRbacUsers, targetComp);
     } else if (viewName === 'rbac-roles') {
       await Promise.all([
-        safeLoadRbac<RBACRole>('rbacRoles', setRbacRoles),
-        safeLoadRbac<RBACPermission>('rbacPermissions', setRbacPermissions)
+        safeLoadRbac<RBACRole>('rbacRoles', setRbacRoles, targetComp),
+        safeLoadRbac<RBACPermission>('rbacPermissions', setRbacPermissions, targetComp)
       ]);
     }
   };
@@ -678,15 +684,122 @@ export function useHRAuth({ loadAllData, setSeedStatus, resetLoadedViews, goToDa
     if (!hasPermission('view_rbac')) {
       throw new Error('HTTP 403 Forbidden: لا تمتلك صلاحية إدارة وإعداد مستخدمي النظام.');
     }
-    const { password: _, ...safeUser } = userObj;
-    const targetCompId = currentCompanyId || getActiveCompanyId();
-    const newId = doc(resolveCollectionRef('rbacUsers', targetCompId)).id;
-    const item: RBACUser = { ...safeUser, id: newId, companyId: targetCompId };
 
-    // Create inside company's subcollection
-    await createDocument('rbacUsers', newId, item, targetCompId);
-    // Also record in global_rbacUsers for seamless global login discovery
-    await createDocument('global_rbacUsers', newId, item, targetCompId);
+    const email = userObj.username.trim().toLowerCase();
+    const password = userObj.password?.trim();
+
+    if (!email) {
+      throw new Error('فضلاً أدخل اسم المستخدم أو البريد الإلكتروني للموظف');
+    }
+
+    if (!password || password.length < 6) {
+      throw new Error('كلمة المرور مطلوبة ويجب ألا تقل عن 6 خانات لتسجيل الحساب في خوادم التوثيق');
+    }
+
+    const targetCompId = currentCompanyId || getActiveCompanyId();
+
+    // 1. Create real Firebase Authentication user using an isolated secondary App/Auth instance
+    // to preserve the currently logged-in administrator's session
+    const secondaryAppName = `secondary-auth-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    let secondaryApp = null;
+    let newUid: string | null = null;
+    let createdUser: any = null;
+
+    try {
+      secondaryApp = initializeApp(firebaseConfig, secondaryAppName);
+      const secondaryAuth = getAuth(secondaryApp);
+      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+      createdUser = userCredential.user;
+      newUid = createdUser.uid;
+    } catch (authErr: any) {
+      console.error("Firebase Auth secondary user creation error: ", authErr);
+      if (secondaryApp) {
+        try {
+          await deleteApp(secondaryApp);
+        } catch {
+          // ignore cleanup error
+        }
+      }
+
+      if (authErr.code === 'auth/email-already-in-use') {
+        throw new Error('البريد الإلكتروني / اسم المستخدم مسجل مسبقاً في خوادم التوثيق');
+      } else if (authErr.code === 'auth/weak-password') {
+        throw new Error('كلمة المرور ضعيفة جداً. يجب أن تتكون من 6 خانات على الأقل');
+      } else if (authErr.code === 'auth/invalid-email') {
+        throw new Error('صيغة البريد الإلكتروني المدخل غير صالحة');
+      } else {
+        throw new Error(authErr.message || 'فشل إنشاء حساب التوثيق للمستخدم');
+      }
+    }
+
+    if (!newUid) {
+      if (secondaryApp) {
+        try {
+          await deleteApp(secondaryApp);
+        } catch {
+          // ignore
+        }
+      }
+      throw new Error('فشل الحصول على معرّف التوثيق (UID) للمستخدم الجديد.');
+    }
+
+    // 2. Prepare safe user object - password MUST NEVER be stored in Firestore
+    const { password: _, ...safeUser } = userObj;
+    const item: RBACUser = {
+      ...safeUser,
+      username: email,
+      id: newUid,
+      companyId: targetCompId
+    };
+
+    // 3. Create Firestore documents with rollback safety
+    try {
+      // Create inside company's subcollection: /companies/{companyId}/rbacUsers/{newUid}
+      await createDocument('rbacUsers', newUid, item, targetCompId);
+      // Also record in global_rbacUsers: /rbacUsers/{newUid}
+      await createDocument('global_rbacUsers', newUid, item, targetCompId);
+    } catch (fsErr: any) {
+      console.error("Firestore RBAC creation failed. Initiating rollback of Auth user: ", fsErr);
+      // Rollback: delete newly created Firebase Auth account
+      if (createdUser) {
+        try {
+          await deleteUser(createdUser);
+          console.warn(`[ROLLBACK SUCCESS] Deleted orphaned Firebase Auth user ${newUid}`);
+        } catch (delErr) {
+          console.error(`[ROLLBACK ERROR] Failed to delete orphaned Firebase Auth user ${newUid}: `, delErr);
+        }
+      }
+      // Also cleanup any partial Firestore document that might have been written
+      try {
+        await dbDeleteDoc('rbacUsers', newUid, targetCompId);
+      } catch {
+        // ignore
+      }
+      try {
+        await dbDeleteDoc('global_rbacUsers', newUid, targetCompId);
+      } catch {
+        // ignore
+      }
+
+      if (secondaryApp) {
+        try {
+          await deleteApp(secondaryApp);
+        } catch {
+          // ignore
+        }
+      }
+
+      throw new Error(`فشل حفظ بيانات الصلاحيات في قاعدة البيانات (${fsErr.message || 'خطأ غير معروف'}). تم التراجع عن إنشاء الحساب لضمان اتساق البيانات.`);
+    }
+
+    // Clean up secondary app safely
+    if (secondaryApp) {
+      try {
+        await deleteApp(secondaryApp);
+      } catch (appDelErr) {
+        console.warn("Secondary app disposal warning: ", appDelErr);
+      }
+    }
 
     await loadAllData();
   };
@@ -710,14 +823,50 @@ export function useHRAuth({ loadAllData, setSeedStatus, resetLoadedViews, goToDa
     if (!hasPermission('view_rbac')) {
       throw new Error('HTTP 403 Forbidden: لا تمتلك صلاحية حذف مستخدمين من النظام.');
     }
-    const targetCompId = currentCompanyId || getActiveCompanyId();
-    const isSelf = currentUser?.id === id;
-    await dbDeleteDoc('rbacUsers', id, targetCompId);
-    await dbDeleteDoc('global_rbacUsers', id, targetCompId);
-    await loadAllData();
-    if (isSelf) {
-      logout();
+
+    if (!id) {
+      throw new Error('معرف المستخدم غير محدد.');
     }
+
+    // Safety check: Prevent deleting currently logged-in user
+    if (currentUser?.id === id || auth.currentUser?.uid === id) {
+      throw new Error('لا يمكن حذف حساب المستخدم المسجل دخوله حالياً.');
+    }
+
+    const targetUser = rbacUsers.find(u => u.id === id);
+    const targetCompId = targetUser?.companyId || currentCompanyId || getActiveCompanyId();
+
+    // Check if current user is Super Admin
+    // ONLY valid Super Admin checks: currentUser.isSuperAdmin or centralized SUPER_ADMIN_EMAIL
+    // Never use roleId === 'role_admin' because Company Admin also has role_admin
+    const isSuper = !!currentUser?.isSuperAdmin ||
+      auth.currentUser?.email?.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase();
+
+    // 1. Delete company-scoped RBAC membership: /companies/{companyId}/rbacUsers/{uid}
+    await dbDeleteDoc('rbacUsers', id, targetCompId);
+
+    // 2. Global RBAC handling:
+    if (isSuper) {
+      // Super Admin preserves ability to delete global RBAC record if permitted
+      try {
+        await dbDeleteDoc('global_rbacUsers', id, targetCompId);
+      } catch (err) {
+        console.warn('Super Admin global RBAC deletion notice:', err);
+      }
+    } else {
+      // Company Admin: DO NOT delete global RBAC record (/rbacUsers/{uid}).
+      // Instead, deactivate it so the user cannot log in, complying strictly with Firestore rules.
+      try {
+        await dbUpdateDoc('global_rbacUsers', id, { status: 'inactive' }, targetCompId);
+      } catch (err) {
+        console.warn('Company Admin deactivation update notice:', err);
+      }
+    }
+
+    // 3. Immediately update local state so user is removed from UI without delay
+    setRbacUsers(prev => prev.filter(u => u.id !== id));
+
+    await loadAllData();
   };
 
   const addRBACRole = async (roleObj: Omit<RBACRole, 'id'>) => {

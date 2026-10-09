@@ -25,7 +25,8 @@ import {
   RBACPermission,
   EmployeeAsset,
   AssetHistory,
-  Company
+  Company,
+  InAppNotification
 } from '../types';
 
 /** Lifecycle status of the one-time database seeding operation. */
@@ -64,6 +65,14 @@ export interface HRContextProps {
   setSelectedEmployeeId: (id: string | null) => void;
   employeeFileTab: string;
   setEmployeeFileTab: (tab: string) => void;
+
+  // Selected task & Notifications (Phase 1)
+  selectedTaskId: string | null;
+  setSelectedTaskId: (id: string | null) => void;
+  notifications: InAppNotification[];
+  unreadNotificationsCount: number;
+  markNotificationAsRead: (id: string) => Promise<void>;
+  markAllNotificationsAsRead: () => Promise<void>;
 
   // Mutators
   addEmployee: (emp: Omit<Employee, 'id'>) => Promise<void>;

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useHR } from '../context/HRContext';
-import { ChevronDown, Lock, LogOut, Building2 } from 'lucide-react';
+import { ChevronDown, Lock, LogOut, Building2, Bell, CheckCheck, CheckSquare } from 'lucide-react';
+import { InAppNotification } from '../types';
 import logo from './logo.png';
 
 interface MenuItem {
@@ -15,6 +16,25 @@ interface MenuSection {
   items: MenuItem[];
 }
 
+function formatRelativeTime(isoString: string): string {
+  try {
+    const date = new Date(isoString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffMins < 1) return 'الآن';
+    if (diffMins < 60) return `منذ ${diffMins} د`;
+    if (diffHours < 24) return `منذ ${diffHours} س`;
+    if (diffDays < 7) return `منذ ${diffDays} يوم`;
+    return date.toLocaleDateString('ar-SA');
+  } catch {
+    return isoString;
+  }
+}
+
 export const Sidebar: React.FC = () => {
   const {
     currentView,
@@ -27,8 +47,30 @@ export const Sidebar: React.FC = () => {
     currentCompany,
     currentCompanyId,
     allCompanies,
-    switchCompany
+    switchCompany,
+    notifications,
+    unreadNotificationsCount,
+    markNotificationAsRead,
+    markAllNotificationsAsRead,
+    setSelectedTaskId
   } = useHR();
+
+  const [showNotifications, setShowNotifications] = useState(false);
+
+  const handleNotificationClick = async (notif: InAppNotification) => {
+    try {
+      if (!notif.isRead) {
+        await markNotificationAsRead(notif.id);
+      }
+    } catch (err) {
+      console.warn('Failed to mark notification as read:', err);
+    }
+    setShowNotifications(false);
+    if (notif.taskId) {
+      setSelectedTaskId(notif.taskId);
+    }
+    handleNavigate('tasks');
+  };
 
   // Expanded sections state. Default all to true.
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
@@ -121,21 +163,39 @@ export const Sidebar: React.FC = () => {
 
       {/* Brand Header */}
       <div className="p-4 border-b border-slate-150">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center border border-emerald-100 shrink-0 overflow-hidden">
-            <img
-              src={logo}
-              alt="سحابة الأعمال"
-              className="w-full h-full object-contain"
-            />
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center border border-emerald-100 shrink-0 overflow-hidden">
+              <img
+                src={logo}
+                alt="سحابة الأعمال"
+                className="w-full h-full object-contain"
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-xs font-black text-slate-800 leading-tight truncate">سحابة الأعمال</h1>
+              <p className="text-[10px] text-emerald-700 font-bold truncate mt-0.5 flex items-center gap-1">
+                <Building2 className="w-3 h-3 shrink-0" />
+                <span className="truncate">{currentCompany?.name || 'شركة سحابة الأعمال'}</span>
+              </p>
+            </div>
           </div>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-xs font-black text-slate-800 leading-tight truncate">سحابة الأعمال</h1>
-            <p className="text-[10px] text-emerald-700 font-bold truncate mt-0.5 flex items-center gap-1">
-              <Building2 className="w-3 h-3 shrink-0" />
-              <span className="truncate">{currentCompany?.name || 'شركة سحابة الأعمال'}</span>
-            </p>
-          </div>
+
+          {/* Notification Bell Button (Requirement 4) */}
+          <button
+            type="button"
+            onClick={() => setShowNotifications(prev => !prev)}
+            className="relative p-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition cursor-pointer shrink-0"
+            title="الإشعارات والتنبيهات"
+            aria-label="الإشعارات والتنبيهات"
+          >
+            <Bell className="w-4 h-4 text-slate-700" />
+            {unreadNotificationsCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-rose-600 text-white text-[9px] font-black w-4.5 h-4.5 rounded-full flex items-center justify-center shadow-xs animate-pulse">
+                {unreadNotificationsCount > 9 ? '+9' : unreadNotificationsCount}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Super Admin Company Switcher (Requirement #8) */}
@@ -274,6 +334,123 @@ export const Sidebar: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Notifications Dropdown Panel (Requirement 4) */}
+      {showNotifications && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-slate-900/20 backdrop-blur-2xs"
+            onClick={() => setShowNotifications(false)}
+          />
+          <div
+            className="fixed top-14 left-4 sm:left-auto sm:right-68 w-84 max-w-[calc(100vw-2rem)] bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 text-right font-sans flex flex-col max-h-[82vh]"
+            dir="rtl"
+          >
+            {/* Header */}
+            <div className="p-3.5 border-b border-slate-150 flex items-center justify-between bg-slate-50/80">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+                  <Bell className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-black text-slate-800">الإشعارات والتنبيهات</h3>
+                  <span className="text-[10px] text-slate-500 font-medium">
+                    {unreadNotificationsCount > 0
+                      ? `${unreadNotificationsCount} إشعار غير مقروء`
+                      : 'جميع الإشعارات مقروءة'}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {unreadNotificationsCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={markAllNotificationsAsRead}
+                    className="p-1.5 rounded-lg text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 transition text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                    title="تحديد الكل كمقروء"
+                  >
+                    <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>تحديد الكل</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowNotifications(false)}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition cursor-pointer text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* List */}
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-100 p-1.5 max-h-[380px] scrollbar-thin">
+              {notifications.length === 0 ? (
+                <div className="py-12 px-4 text-center space-y-2">
+                  <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                    <Bell className="w-6 h-6 text-slate-350" />
+                  </div>
+                  <p className="text-xs font-black text-slate-700">لا توجد إشعارات حالياً</p>
+                  <p className="text-[10px] text-slate-400">ستظهر هنا التنبيهات وإشعارات مهام الأقسام فور إنشائها</p>
+                </div>
+              ) : (
+                notifications.map((n) => (
+                  <div
+                    key={n.id}
+                    onClick={() => handleNotificationClick(n)}
+                    className={`p-3 rounded-xl transition cursor-pointer space-y-1.5 ${
+                      !n.isRead
+                        ? 'bg-emerald-50/50 hover:bg-emerald-50/90 border-r-4 border-r-[#00875A]'
+                        : 'hover:bg-slate-50 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-black text-slate-800 flex items-center gap-1">
+                          <CheckSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span>{n.title}</span>
+                        </span>
+                        {!n.isRead && (
+                          <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block animate-pulse shrink-0" />
+                        )}
+                      </div>
+                      <span className="text-[9px] text-slate-400 font-medium font-mono">
+                        {formatRelativeTime(n.createdAt)}
+                      </span>
+                    </div>
+
+                    <p className="text-[11px] text-slate-600 font-medium leading-relaxed">
+                      {n.message}
+                    </p>
+
+                    {n.departmentId && (
+                      <div className="flex items-center gap-1 text-[9.5px] text-slate-500 font-bold">
+                        <span className="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded">
+                          القسم: {n.departmentId}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-2.5 border-t border-slate-150 bg-slate-50 text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNotifications(false);
+                  handleNavigate('tasks');
+                }}
+                className="text-[11px] text-[#00875A] font-bold hover:underline cursor-pointer"
+              >
+                الانتقال إلى لوحة مهام الفريق ←
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </aside>
   );
 };
